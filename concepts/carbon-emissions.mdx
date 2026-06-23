@@ -8,7 +8,7 @@ When sills intrude into organic-rich sedimentary rocks, they drive the surroundi
 
 ## SILLi model
 
-The SILLi model implements the Easy%Ro approach of Sweeney & Burnham (1990). It represents the thermal cracking of organic matter as 20 parallel first-order Arrhenius reactions, each with its own activation energy drawn from a discrete distribution (34–72 kcal/mol). The cumulative reaction progress *F* is used to derive vitrinite reflectance (%Ro) and to track how much TOC remains.
+The SILLi model implements the Easy%Ro approach of Sweeney & Burnham (1990), while the code is a direct implementation of the original MATLAB version of SILLi (Iyer et al., 2018). It represents the thermal cracking of organic matter as 20 parallel first-order Arrhenius reactions, each with its own activation energy drawn from a discrete distribution (34–72 kcal/mol). The cumulative reaction progress _F_ is used to derive vitrinite reflectance (%Ro) and to track how much TOC remains.
 
 You invoke the SILLi model through `emit.SILLi_emissions()`:
 
@@ -28,23 +28,19 @@ RCO2, Rom, percRo, TOC, W = emit.SILLi_emissions(
 Key outputs:
 
 | Variable | Meaning |
-|---|---|
+| --- | --- |
 | `RCO2` | Volumetric CO₂ release rate (kg m⁻³ s⁻¹) at each grid node |
 | `Rom` | Organic-matter loss rate (kg m⁻³ s⁻¹); used to compute the endothermic heat sink |
 | `percRo` | Vitrinite reflectance field (%Ro); a proxy for thermal maturity |
 | `TOC` | Updated total organic carbon field (wt fraction) |
 | `W` | Updated 20-channel reaction state array; pass back in the next time step |
 
-<Note>
-SILLi only activates its kinetics on `'shale'` and `'sandstone'` nodes (plus carbonate lithologies for the separate decarbonation pathway). Nodes with other rock types contribute zero organic CO₂.
-</Note>
+## sillburp model
 
-## Sillburp model
-
-The Sillburp model (Jones et al., 2019) resolves organic matter into four distinct kerogen components, each with its own activation energy distribution and frequency factor:
+The sillburp model (Jones et al., 2019) resolves organic matter into four distinct kerogen components, each with its own activation energy distribution and frequency factor:
 
 | Component | Reactions | Mean Eₐ | Frequency factor (A) |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | Labile kerogen | 7 | 208 kJ/mol | 1.58×10¹³ s⁻¹ |
 | Refractory kerogen | 21 | 279 kJ/mol | 1.83×10¹⁸ s⁻¹ |
 | Vitrinite (inert) | 55 | 242 kJ/mol | 4×10¹⁰ s⁻¹ |
@@ -74,24 +70,22 @@ The `progress_of_reactions` array has shape `(4, 55, nrows, ncols)` and tracks t
 ## Choosing a model
 
 <Accordion title="SILLi vs. Sillburp: a detailed comparison">
+  **SILLi (Easy%Ro)**
 
-**SILLi (Easy%Ro)**
+  - Single organic-matter pool; all organic material is treated as vitrinite-equivalent.
+  - 20 parallel reactions; lower memory footprint and faster per-step execution.
+  - Directly outputs vitrinite reflectance (%Ro), which is the most widely measured thermal maturity proxy in sedimentary basins and can be validated against borehole data.
+  - A good choice when you have limited kerogen-type information or need rapid sensitivity tests across many flux/volume scenarios.
 
-- Single organic-matter pool; all organic material is treated as vitrinite-equivalent.
-- 20 parallel reactions; lower memory footprint and faster per-step execution.
-- Directly outputs vitrinite reflectance (%Ro), which is the most widely measured thermal maturity proxy in sedimentary basins and can be validated against borehole data.
-- A good choice when you have limited kerogen-type information or need rapid sensitivity tests across many flux/volume scenarios.
+  **Sillburp**
 
-**Sillburp**
+  - Resolves labile, refractory, and inert kerogen fractions plus an oil-cracking channel.
+  - 90 total reaction channels; more memory and compute per step.
+  - Accounts for the fact that labile kerogen cracks at lower temperatures than refractory kerogen — important when sill contact aureoles are narrow or heating rates are very high.
+  - Produces oil generation rates alongside CO₂, making it suitable for petroleum systems analysis in addition to climate forcing estimates.
+  - Requires you to supply or assume a kerogen-type breakdown for your study area.
 
-- Resolves labile, refractory, and inert kerogen fractions plus an oil-cracking channel.
-- 90 total reaction channels; more memory and compute per step.
-- Accounts for the fact that labile kerogen cracks at lower temperatures than refractory kerogen — important when sill contact aureoles are narrow or heating rates are very high.
-- Produces oil generation rates alongside CO₂, making it suitable for petroleum systems analysis in addition to climate forcing estimates.
-- Requires you to supply or assume a kerogen-type breakdown for your study area.
-
-If you are primarily interested in bulk CO₂ budgets and have borehole %Ro data for validation, use **SILLi**. If you need kerogen-resolved maturation histories or oil-generation estimates, use **Sillburp**.
-
+  If you are primarily interested in bulk CO₂ budgets and have borehole %Ro data for validation, use **SILLi**. If you need kerogen-resolved maturation histories or oil-generation estimates, use **Sillburp**.
 </Accordion>
 
 ## Initial thermal state
@@ -124,50 +118,3 @@ current_time, tot_RCO2, props_array, \
 ```
 
 Both functions advance the temperature field and kinetics over the specified pre-emplacement `time`, then return the fully conditioned state arrays ready to pass straight into `emplace_sills()`.
-
-## Carbon state variables
-
-After a completed run, `emplace_sills()` returns (or writes to `props_array`) the following carbon-related fields:
-
-| Field | Where to find it | Meaning |
-|---|---|---|
-| `tot_RCO2` | Returned list | Time series of total CO₂ flux (kg/s) summed over the entire model domain. Length equals the number of saved time steps. |
-| `props_array[TOC_index]` | `props_array` slice | Final spatial TOC field (wt fraction) showing where organic matter has been depleted. |
-| `props_array[poros_index]` | `props_array` slice | Updated porosity field (compaction and devolatilisation can reduce porosity). |
-| `percRo_silli` | Returned state variable (SILLi only) | 2D vitrinite reflectance field for comparison with borehole measurements. |
-
-## Plotting cumulative emissions
-
-```python
-import numpy as np
-import matplotlib.pyplot as plt
-
-# tot_RCO2 is the list returned by emplace_sills() or get_silli_initial_thermogenic_state()
-# time_steps is your simulation time array (seconds)
-
-# Convert seconds to millions of years and kg/s to Gt CO₂/yr
-s_per_yr = 3.156e7
-Gt_per_kg = 1e-12
-time_Ma = np.array(time_steps) / (s_per_yr * 1e6)
-cumulative_Gt = np.cumsum(tot_RCO2) * s_per_yr * Gt_per_kg  # Gt CO₂
-
-fig, axes = plt.subplots(1, 2, figsize=(12, 4))
-
-axes[0].plot(time_Ma, np.array(tot_RCO2) * s_per_yr * Gt_per_kg)
-axes[0].set_xlabel("Time (Ma)")
-axes[0].set_ylabel("CO₂ flux (Gt/yr)")
-axes[0].set_title("Instantaneous CO₂ flux")
-
-axes[1].plot(time_Ma, cumulative_Gt)
-axes[1].set_xlabel("Time (Ma)")
-axes[1].set_ylabel("Cumulative CO₂ (Gt)")
-axes[1].set_title("Cumulative CO₂ released")
-
-plt.tight_layout()
-plt.savefig("co2_emissions.png", dpi=150)
-plt.show()
-```
-
-<Tip>
-The `tot_RCO2` list only captures organic thermogenic CO₂ and carbonate decarbonation contributions. Volcanic degassing from the magma itself is not included — you will need to add that separately if you want a full LIP carbon budget.
-</Tip>

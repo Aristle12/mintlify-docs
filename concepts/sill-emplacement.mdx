@@ -12,12 +12,12 @@ A sill is a tabular igneous intrusion that forms when magma forces its way betwe
 
 ## The sill cube
 
-`build_sillcube()` pre-computes the complete intrusion catalogue for a simulation run. It samples random distributions for sill geometry and position, assembles emplacement timing from the specified magma flux, and calls `rules.sill_3Dcube()` to pack everything into a 3D NumPy array (the *sill cube*). Each entry in the sill cube encodes a sill's rock type, geometry, and emplacement time, indexed by along-strike position, lateral position, and sill number.
+`build_sillcube()` pre-computes the complete intrusion catalogue for a simulation run. It samples random distributions for sill geometry and position, assembles emplacement timing from the specified magma flux, and calls `rules.sill_3Dcube()` to pack everything into a 3D NumPy array (the _sill cube_). Each entry in the sill cube encodes a sill's rock type, geometry, and emplacement time, indexed by along-strike position, lateral position, and sill number.
 
 ### Key parameters
 
 | Parameter | Format | Meaning |
-|---|---|---|
+| --- | --- | --- |
 | `thickness_range` | `[min, max, std]` in metres | Controls the thickness distribution of individual sills. |
 | `aspect_ratio` | `[mean, std]` | Mean and standard deviation of the width-to-thickness ratio; drives lateral extent. |
 | `depth_range` | `[min, max, std]` in metres | Depth window (below the surface) in which sills are randomly placed. |
@@ -29,7 +29,7 @@ A sill is a tabular igneous intrusion that forms when magma forces its way betwe
 | `n_sills` | int | Initial estimate of the total number of sills (used for array pre-allocation; the actual count may differ). |
 
 <Note>
-`build_sillcube()` automatically generates diagnostic plots of the depth distribution, width/thickness distributions, and cumulative volume vs. time in your `plots/` directory. Review these before running the full simulation to confirm the intrusion population looks geologically reasonable.
+  `build_sillcube()` automatically generates diagnostic plots of the depth distribution, width/thickness distributions, and cumulative volume vs. time in your `plots/` directory. Review these before running the full simulation to confirm the intrusion population looks geologically reasonable.
 </Note>
 
 ### Distribution functions
@@ -47,10 +47,10 @@ You can also attach vertical dike tails to each sill by setting `emplace_dike=Tr
 
 ## Stratigraphic displacement
 
-When a sill intrudes between existing rock layers, it physically pushes the overlying strata upward — a process TuLIP replicates with `rules.value_pusher2D()`. Every column of the `props_array` (temperature, lithology, porosity, density, TOC, specific heat) above the injection depth is shifted downward by the sill thickness in grid nodes, and the sill cells are filled with magma properties. This means the model correctly tracks the burial of organic matter that was already maturing above the intrusion.
+When a sill intrudes between existing rock layers, it physically pushes the underlying strata downward — a process TuLIP replicates with `rules.value_pusher2D()`. Every column of the `props_array` (temperature, lithology, porosity, density, TOC, specific heat) below the sill is shifted downward by the sill thickness in grid nodes, and the sill cells are filled with magma properties. This means the model correctly tracks the burial of organic matter that was already maturing above the intrusion.
 
 <Warning>
-If your sill catalogue contains very thick intrusions near the surface, the upward push can move rock nodes past the model boundary. Set `depth_range[0]` (minimum emplacement depth) to at least a few sill thicknesses below the surface to avoid this.
+  If your sill catalogue contains very thick intrusions near the surface, the downward push can move rock nodes past the model boundary. Ensure that the domain extends sufficiently below the sedimentary strata to avoid the deletion of magma and sedimentary nodes.
 </Warning>
 
 ## Example
@@ -85,5 +85,10 @@ print(f"Emplaced {n_sills} sills totalling ~1000 km³")
 The returned `params` array has shape `(5, n_sills)` and stores emplacement times, depths, lateral centres, widths, and thicknesses for every sill — useful for post-processing and plotting.
 
 <Tip>
-Save `sillcube` and `params` to disk with `np.save()` immediately after calling `build_sillcube()`. This lets you reconstruct exactly the same intrusion sequence without rerunning the stochastic generation step.
+  Save `sillcube` and `params` to disk with `np.save()` immediately after calling `build_sillcube()`. This lets you reconstruct exactly the same intrusion sequence without rerunning the stochastic generation step.
 </Tip>
+
+# Alternate methods of sill emplacement
+
+- You can use the `rules.sill_3Dcube `to emplace sills directly if you have a prebuilt distribution of sill geometry and positions. 
+- If you need to model specific shapes that are not elliptical or rectangular, or want to model episodically growing magmatic bodies, you can also create your own 3D cube through custom functions by appending `'_Nst'` where N is the injection event number (start with 0) and t is the time of emplacement. You also need to create a `'emplacement_params.csv'` file for this so that the emplacement history can be read in by `sill_controls.emplace_sills()` .

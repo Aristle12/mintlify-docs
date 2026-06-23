@@ -1,7 +1,7 @@
 ---
-title: "utilities module reference"
+title: "TuLIP utilities: cubemaker, cooler, and sillburp_cooler"
 sidebarTitle: "utilities"
-description: "Reference for TuLIP's utilities module: cooler and sillburp_cooler run parallel 2D slice simulations; cubemaker builds multi-parameter 3D sill geometry archives."
+description: "API reference for TuLIP utilities: cooler and sillburp_cooler execute 2D slice simulations; cubemaker builds and saves 3D sill geometry archives."
 ---
 
 The `utilities` module provides three standalone functions that sit one level above `sill_controls` in the TuLIP workflow. `cooler` and `sillburp_cooler` each execute a full 2-D cross-section simulation (including heat diffusion and carbon-emission modelling) by reading pre-built sill-cube slices from disk. `cubemaker` generates and saves one 3-D sill cube for a single `(flux, volume)` combination. All three functions are designed to be called in parallel across many parameter combinations using a task scheduler such as `joblib`.

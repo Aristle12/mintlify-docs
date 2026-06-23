@@ -1,7 +1,7 @@
 ---
-title: "cool class: heat-transfer solvers reference"
+title: "cool class API reference: heat-transfer solvers for TuLIP"
 sidebarTitle: "cool"
-description: "Full reference for the cool class: ADI, explicit, and implicit finite-difference solvers for 2D heat diffusion in heterogeneous geological media."
+description: "API reference for the cool class — ADI, explicit, and implicit finite-difference solvers for 2D heat diffusion in heterogeneous geological media."
 ---
 
 The `cool` class provides all numerical solvers for the 2-D heat diffusion equation in TuLIP. It supports four broad solver families — ADI (Alternating Direction Implicit), fully-implicit direct solve, matrix-free explicit convolution, and iterative — each suited to different accuracy-versus-speed trade-offs. You rarely need to call these methods directly; `sill_controls` wraps them through `cool.diff_solve`. All methods are instance methods unless marked `@staticmethod`.

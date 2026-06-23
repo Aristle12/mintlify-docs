@@ -113,7 +113,8 @@ current_time, tot_RCO2, props_array, \
 
 # For the Sillburp model:
 current_time, tot_RCO2, props_array, \
-    RCO2, Rom, progress_of_reactions, oil_production_rate, curr_TOC, rate_of_reactions = \
+    RCO2, Rom, progress_of_reactions, oil_production_rate, curr_TOC, rate_of_reactions, \
+    sillburp_weights, T_field = \
     sc.get_sillburp_initial_thermogenic_state(
         props_array,
         dt=3.156e9,

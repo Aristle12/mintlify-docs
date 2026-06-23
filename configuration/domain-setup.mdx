@@ -1,5 +1,5 @@
 ---
-title: "Configure the model domain in TuLIP"
+title: "Configure the TuLIP simulation domain and grid layout"
 sidebarTitle: "Domain Setup"
 description: "Define the 2D crustal grid for your TuLIP simulation by setting physical extent, grid spacing, and initial temperature conditions."
 ---
@@ -93,4 +93,4 @@ sc = sill_controls(
 )
 ```
 
-This creates an object with a 240 × 6000 cell grid (12 km deep, 300 km wide at 50 m resolution). All other parameters take their defaults: constant thermal conductivity (`kc_val=7.884e7`), built-in rock property table, and basalt melt as the intrusive lithology. See [Rock Properties](/configuration/rock-properties) to override any of these defaults.
+This creates an object with a 240 × 6000 cell grid (12 km deep, 300 km wide at 50 m resolution). All other parameters take their defaults: constant thermal diffusivity (`kc_val=7.884e7`), built-in rock property table, and basalt melt as the intrusive lithology. See [Rock Properties](/configuration/rock-properties) to override any of these defaults.

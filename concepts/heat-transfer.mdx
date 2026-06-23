@@ -27,8 +27,8 @@ You select a solver by passing its name string to `diff_solve()` (or to `emplace
 | `'conv smooth'` | Explicit convolution, averaged (smoothed) diffusivity at cell faces | Fast; recommended for exploratory runs. Stability requires dt ≤ dx²/(4α_max). |
 | `'conv chain'` | Explicit convolution, chain-rule gradient of diffusivity | Captures sharp conductivity contrasts more accurately at the cost of slightly higher compute time. |
 | `'adi'` | Alternating Direction Implicit (ADI), smoothed diffusivity | Unconditionally stable; splits each time step into two 1D tridiagonal solves. Best choice for long production runs with large time steps. |
-| `'smooth'` | Fully implicit, smoothed diffusivity | Solves the full sparse linear system via `pypardiso` or `scipy`. Very stable but memory-intensive on large grids. |
-| `'chain'` | Fully implicit, chain-rule diffusivity gradient | Fully implicit with the most accurate representation of conductivity gradients; highest memory cost. |
+| `'smooth'` | Explicit sparse matrix-vector, smoothed diffusivity | Pre-builds the sparse propagation matrix and advances the temperature field with a single matrix–vector multiply. Handles heterogeneous diffusivity fields efficiently when `k_const=True` caches the matrix across steps. |
+| `'chain'` | Explicit sparse matrix-vector, chain-rule diffusivity gradient | Same matrix-vector approach as `'smooth'` but incorporates the chain-rule gradient of diffusivity at every step, better resolving sharp conductivity contrasts. |
 
 <Tip>
 Use `'adi'` for production runs. Its unconditional stability lets you take time steps that are orders of magnitude larger than the explicit CFL limit, dramatically cutting run times for million-year simulations — without sacrificing accuracy on typical crustal grids.

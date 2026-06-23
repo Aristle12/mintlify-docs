@@ -1,5 +1,5 @@
 ---
-title: "Customize rock properties in TuLIP"
+title: "Customize rock and magma properties in TuLIP models"
 sidebarTitle: "Rock Properties"
 description: "Use TuLIP's six built-in rock types or supply custom property dictionaries for density, porosity, TOC, conductivity, and specific heat."
 ---
@@ -23,7 +23,7 @@ These values are the defaults hard-coded in `sill_controls.__init__`. TOC values
 
 ## rock_prop_dict
 
-The `rock_prop_dict` parameter maps rock-type name strings to a dictionary of physical properties. Each entry must contain at minimum `'Density'`, `'Porosity'`, `'TOC'`, and `'Specific Heat'`. TuLIP also uses `'Latent Heat Org'` internally to account for the heat released when organic matter breaks down.
+The `rock_prop_dict` parameter maps rock-type name strings to a dictionary of physical properties. Each entry must contain at minimum `'Density'`, `'Porosity'`, `'TOC'`, and `'Specific Heat'`. TuLIP also uses `'Latent Heat Org'` internally to account for the thermal energy absorbed during organic matter breakdown (pyrolysis is endothermic, so the value is negative).
 
 ```python
 custom_rock_props = {
@@ -136,7 +136,7 @@ sc = sill_controls(
 TuLIP offers three ways to supply thermal conductivity to the solver.
 
 <ParamField path="k_const" type="bool" default="True">
-  When `True`, every grid cell uses the same constant conductivity value given by `kc_val`. This is the fastest option and is sufficient for most applications where you do not expect large spatial variations in conductivity.
+  When `True`, every grid cell uses the same constant thermal diffusivity value given by `kc_val`. This is the fastest option and is sufficient for most applications where you do not expect large spatial variations in conductivity.
 </ParamField>
 
 <ParamField path="kc_val" type="float" default="7.884e7">

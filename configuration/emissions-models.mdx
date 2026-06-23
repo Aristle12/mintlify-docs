@@ -1,5 +1,5 @@
 ---
-title: "Configure carbon emission models in TuLIP"
+title: "Configure TuLIP's thermogenic carbon emission models"
 sidebarTitle: "Emissions Models"
 description: "Select and configure TuLIP's SILLi or Sillburp thermogenic carbon models to quantify CO₂ release driven by magmatic sill intrusions."
 ---
@@ -53,6 +53,7 @@ The Sillburp calculation is performed by `emit.sillburp()`. Its key inputs are:
 | `dt` | float | Time step in seconds |
 | `reaction_energies` | ndarray (4, 55) | Activation energy distributions from `emit.get_sillburp_reaction_energies()` |
 | `TOCo` | ndarray (a, b) | Initial TOC at t=0 |
+| `oil_production_rate` | float, default `0` | Accumulated oil production rate from the previous time step |
 | `progress_of_reactions` | ndarray (4, 55, a, b) | State array — fraction of each reaction completed |
 | `rate_of_reactions` | ndarray (4, 55, a, b) | State array — current reaction rates |
 | `weights` | ndarray or None | Optional weights for averaging kerogen fractions |

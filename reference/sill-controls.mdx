@@ -1,7 +1,7 @@
 ---
-title: "sill_controls class reference"
+title: "sill_controls API reference: TuLIP simulation orchestrator"
 sidebarTitle: "sill_controls"
-description: "Complete reference for sill_controls, the orchestration class that wires together cooling physics, geometry rules, and property management for TuLIP simulations."
+description: "API reference for sill_controls, the TuLIP orchestration class that links cooling physics, geometry rules, and emission models into a coherent workflow."
 ---
 
 The `sill_controls` class is the central controller for a TuLIP simulation. It links the heat-transfer solvers in `cool`, the geometric utilities in `rules`, and the carbon-emission models in `emit` into a single coherent workflow. You instantiate `sill_controls` once with your grid dimensions and configuration, then call its methods to build stochastic sill swarms, establish pre-emplacement thermal states, and run the time-stepping loop.
@@ -20,11 +20,15 @@ sill_controls(
     k_const=True, kc_val=7.884e7,
     cp=1, cp_const=True,
     calculate_closest_sill=False,
+    calculate_all_sills_distances=False,
+    calculate_at_all_times=False,
     rock_prop_dict=None, magma_prop_dict=None,
+    lith_plot_dict=None,
     sill_cube_dir='sillcubes/',
     k_func=None, cp_func=None,
     melt_rock='basalt',
-    melt_fraction_function=None
+    melt_fraction_function=None,
+    melt_function_args=None
 )
 ```
 
@@ -80,12 +84,24 @@ Creates and configures the simulation controller. Required parameters define the
   Enables proximity analysis between intrusions via `check_closest_sill_temp`. Results are saved to CSV.
 </ParamField>
 
+<ParamField path="calculate_all_sills_distances" type="bool" default="False">
+  When `True`, computes distances to all other active sills (not just the nearest) at each proximity-analysis step. Only relevant when `calculate_closest_sill=True`.
+</ParamField>
+
+<ParamField path="calculate_at_all_times" type="bool" default="False">
+  When `True`, runs proximity analysis at every time step rather than only at emplacement events. Only relevant when `calculate_closest_sill=True`.
+</ParamField>
+
 <ParamField path="rock_prop_dict" type="dict | None" default="None">
   Dictionary mapping rock-type strings to physical properties. Keys must include `Porosity`, `Density`, `TOC`, `Specific Heat`, and `Latent Heat Org`. When `None`, a built-in dictionary covering `shale`, `sandstone`, `limestone`, `granite`, `basalt`, and `peridotite` is used.
 </ParamField>
 
 <ParamField path="magma_prop_dict" type="dict | None" default="None">
   Dictionary of magma properties (`Temperature`, `Lithology`, `Porosity`, `Density`, `Specific Heat`, `Latent Heat`, `TOC`). Defaults to basaltic melt at 1100 °C with density 2850 kg m⁻³.
+</ParamField>
+
+<ParamField path="lith_plot_dict" type="dict | None" default="None">
+  Dictionary mapping lithology name strings to integer colour indices for visualisation. When `None`, a built-in mapping covering all supported rock types is generated automatically.
 </ParamField>
 
 <ParamField path="sill_cube_dir" type="str" default="'sillcubes/'">
@@ -106,6 +122,10 @@ Creates and configures the simulation controller. Required parameters define the
 
 <ParamField path="melt_fraction_function" type="callable | None" default="None">
   Custom melt-fraction function `F(T_field, *args)`. When `None`, uses the built-in `cool.calcF` tanh-based smooth step.
+</ParamField>
+
+<ParamField path="melt_function_args" type="tuple | None" default="None">
+  Extra positional arguments passed to `melt_fraction_function`. When `None`, defaults to `(T_solidus, T_liquidus)`.
 </ParamField>
 
 ### Example
@@ -333,7 +353,7 @@ Runs the full time-stepping loop: heat diffusion, sill emplacement from the pre-
 ### Returns
 
 <ResponseField name="carbon_model_params" type="tuple">
-  Updated carbon-model state. For `model='silli'`: `(tot_RCO2, tot_melt10, tot_melt50, tot_solidus, area_sills, props_array, RCO2_silli, Rom_silli, percRo_silli, curr_TOC_silli, W_silli)`. For `model='sillburp'` an analogous tuple with Sillburp-specific arrays. For `model=None`: `props_array` only.
+  Updated carbon-model state. For `model='silli'`: `(tot_RCO2, tot_melt10, tot_melt50, tot_solidus, area_sills, props_array, RCO2_silli, Rom_silli, percRo_silli, curr_TOC_silli, W_silli)`. For `model='sillburp'`: `(tot_RCO2, tot_melt10, tot_melt50, tot_solidus, area_sills, props_array, RCO2, Rom, progress_of_reactions, oil_production_rate, curr_TOC, rate_of_reactions)`. For `model=None`: `props_array` only.
 </ResponseField>
 
 ### Example

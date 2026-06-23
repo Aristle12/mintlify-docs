@@ -1,5 +1,5 @@
 ---
-title: "Run a TuLIP thermal simulation end-to-end"
+title: "Run a TuLIP thermal sill-intrusion simulation end-to-end"
 sidebarTitle: "Run Simulation"
 description: "Build a properties array, compute the pre-emplacement thermal state, call emplace_sills(), and read CO₂ and temperature outputs from a TuLIP run."
 ---
@@ -170,7 +170,7 @@ carbon_model_params = sc.emplace_sills(
     save_dir           = f"output/{flux:.3e}/{volumes:.3e}/{z_index}",
     model              = 'silli',        # use the SILLi thermogenic model
     dt                 = dt,
-    q                  = None,           # optional bottom heat flux (W/m²)
+    q                  = np.nan,          # bottom heat flux: np.nan → Dirichlet BC; float array → Neumann BC
 )
 ```
 

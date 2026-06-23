@@ -1,5 +1,5 @@
 ---
-title: "Visualize TuLIP outputs in ParaView via VTK"
+title: "Visualize TuLIP simulation outputs in ParaView via VTK"
 sidebarTitle: "VTK & ParaView"
 description: "Open TuLIP VTK snapshots in ParaView for interactive visualization, or load them with PyVista for scripted field inspection and lithology colour mapping."
 ---
@@ -176,5 +176,5 @@ The default integer codes and their corresponding lithologies are:
 If you initialised `sill_controls` with a custom `rock_prop_dict`, the integer codes are assigned in the order the keys appear in that dictionary — check `sc.lith_plot_dict` at runtime to confirm your mapping.
 
 <Note>
-TuLIP names each snapshot file `Properties_<l>.vtk`, where `<l>` is the loop index over `time_steps` (not the physical simulation time in years). To convert a file index back to simulation time, load the corresponding `dts.csv` file from the same `save_dir` (written by `emplace_sills()`) and compute `time = time_steps[saving_time_step_index + l]`. Alternatively, load `times.csv` from the same directory when using `utilities.cooler()`, which records the actual `time_steps` alongside each row.
+TuLIP names each snapshot file `Properties_<l>.vtk`, where `<l>` is the loop index over `time_steps` (not the physical simulation time in years). `emplace_sills()` writes a `dts.csv` to `save_dir` containing a `dt` column — one time-step duration per simulation step. To recover the simulation time corresponding to snapshot `l`, compute the cumulative sum: `sim_time = current_time + np.sum(dts[:l])`. The easiest approach when using `utilities.cooler()` is to load `times.csv` from the same directory, which records the actual `time_steps` value alongside each output row.
 </Note>

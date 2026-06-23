@@ -1,5 +1,5 @@
 ---
-title: "Analyze and visualize TuLIP simulation outputs"
+title: "Analyze and visualize TuLIP thermal simulation outputs"
 sidebarTitle: "Analyze Results"
 description: "Plot temperature and CO₂ time series, read vitrinite reflectance maps, scale 2D results to province-wide estimates, and save simulation state to HDF5."
 ---
@@ -111,6 +111,8 @@ plt.close()
 ## Province-scale scaling
 
 Individual 2D slice simulations represent a thin along-strike cross-section of a much larger magmatic province. The `bloom.py` module provides functions to extrapolate single-slice CO₂ estimates to province-wide totals.
+
+**`bloom.plot_time_history(flux, iter, save_dir)`** loads the `times.csv` for a single flux/iteration combination and saves a log-scale CO₂ emission-rate plot to `save_dir`.
 
 **`bloom.scale_emissions(z_indexs, dx, dy, load_dir)`** fits a linear regression between cumulative emplaced volume and cumulative CO₂ across all slices in `z_indexs`. The slope (CO₂ per m³) is the scale factor used to predict province-wide emissions from province-wide volume estimates:
 

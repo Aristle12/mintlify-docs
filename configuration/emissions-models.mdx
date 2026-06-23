@@ -1,0 +1,188 @@
+---
+title: "Configure carbon emission models in TuLIP"
+sidebarTitle: "Emissions Models"
+description: "Select and configure TuLIP's SILLi or Sillburp thermogenic carbon models to quantify CO₂ release driven by magmatic sill intrusions."
+---
+
+TuLIP includes two thermogenic carbon emission models that you can activate on a per-run basis. Both models track the progressive thermal cracking of sedimentary organic matter as magmatic heat diffuses outward from each intrusion, but they differ in how they represent the chemistry. SILLi uses the Easy%Ro vitrinite reflectance kinetics (Sweeney & Burnham, 1990), while Sillburp uses four parallel reaction networks based on Jones et al. (2019). You select between them by passing a `model` keyword to `emplace_sills()`.
+
+## SILLi (Easy%Ro model)
+
+SILLi models the thermal maturation of organic matter using the Easy%Ro parallel reaction framework. Twenty first-order Arrhenius reactions with activation energies ranging from 34 to 72 kcal/mol fire simultaneously as temperature increases. The fraction of organic matter converted at each grid cell — the transformation ratio — is used both to update the TOC field and to compute the CO₂ generation rate.
+
+**Physical basis:** vitrinite reflectance kinetics. The method is well-validated for shale and sandstone over the temperature range 60–300 °C.
+
+**Activation:** pass `model='silli'` to `emplace_sills()`.
+
+The SILLi calculation is performed by `emit.SILLi_emissions()`. Its key inputs and outputs are:
+
+| Argument | Type | Description |
+|----------|------|-------------|
+| `T_field` | ndarray (a, b) | Current temperature field in °C |
+| `density` | ndarray (a, b) | Rock density in kg/m³ |
+| `lithology` | ndarray (a, b) | Rock type strings |
+| `porosity` | ndarray (a, b) | Porosity fraction |
+| `TOC_prev` | ndarray (a, b) | TOC from the previous time step (wt %) |
+| `dt` | float | Time step in seconds |
+| `TOCo` | ndarray (a, b) | Initial TOC at t=0 — required after the first step |
+| `W` | ndarray (20, a, b) | State array tracking remaining reaction potential |
+
+**Returns:** `RCO2` (CO₂ generation rate), `Rom` (organic matter loss rate kg/m³/s), `percRo` (vitrinite reflectance %Ro), updated `TOC`, updated `W`.
+
+<Note>
+  SILLi currently computes emissions only for cells where `lithology == 'shale'` or `lithology == 'sandstone'`. If your domain contains other organic-bearing lithologies, you either need to map them to one of these strings or use Sillburp with a custom weight array.
+</Note>
+
+## Sillburp (multi-kerogen model)
+
+Sillburp resolves organic matter into four parallel reaction networks — labile kerogen, refractory kerogen, vitrinite, and oil — each described by a normal distribution of activation energies. This produces more accurate results for Type I and Type II kerogens and captures the intermediate oil-to-gas cracking window that SILLi conflates into a single transformation ratio.
+
+**Physical basis:** four-component parallel Arrhenius kinetics (Jones et al., 2019). More appropriate than SILLi when you need to distinguish oil- and gas-prone windows or when your source rocks span a wide maturity range.
+
+**Activation:** pass `model='sillburp'` to `emplace_sills()`.
+
+The Sillburp calculation is performed by `emit.sillburp()`. Its key inputs are:
+
+| Argument | Type | Description |
+|----------|------|-------------|
+| `T_field` | ndarray (a, b) | Current temperature field in °C |
+| `TOC_prev` | ndarray (a, b) | TOC from the previous time step (wt %) |
+| `density` | ndarray (a, b) | Rock density in kg/m³ |
+| `lithology` | ndarray (a, b) | Rock type strings |
+| `porosity` | ndarray (a, b) | Porosity fraction |
+| `dt` | float | Time step in seconds |
+| `reaction_energies` | ndarray (4, 55) | Activation energy distributions from `emit.get_sillburp_reaction_energies()` |
+| `TOCo` | ndarray (a, b) | Initial TOC at t=0 |
+| `progress_of_reactions` | ndarray (4, 55, a, b) | State array — fraction of each reaction completed |
+| `rate_of_reactions` | ndarray (4, 55, a, b) | State array — current reaction rates |
+| `weights` | ndarray or None | Optional weights for averaging kerogen fractions |
+
+**Returns:** `RCO2`, `Rom`, updated `progress_of_reactions`, `oil_production_rate`, updated `TOC`, updated `rate_of_reactions`.
+
+Before calling `sillburp()` each step, generate the activation energy distributions once:
+
+```python
+from TuLIP import emit
+
+reaction_energies = emit.get_sillburp_reaction_energies()
+```
+
+## Choosing a model
+
+<Tabs>
+  <Tab title="SILLi">
+    **Use SILLi when:**
+    - Your source rocks are predominantly Type III kerogen (vitrinite-like) coals and shales.
+    - You need fast run times for large ensemble studies — SILLi has fewer state variables to track.
+    - You want to compare directly to published SILLi (Iyer et al., 2018) benchmark results.
+    - Vitrinite reflectance (%Ro) is a required model output for comparison with borehole data.
+
+    ```python
+    props_total_array, carbon_model_params = sc.emplace_sills(
+        props_array=props_array,
+        n_sills=200,
+        cool_method='adi',
+        time_steps=time_steps,
+        current_time=current_time,
+        sillsquare=sillsquare,
+        carbon_model_params=carbon_model_params,
+        empl_times=empl_times,
+        volume_params=volume_params,
+        z_index=0,
+        model='silli'   # <-- SILLi selected
+    )
+    ```
+  </Tab>
+  <Tab title="Sillburp">
+    **Use Sillburp when:**
+    - Your source rocks contain mixed Type I/II kerogens (lacustrine or marine shales).
+    - You need to resolve the oil window separately from the gas window.
+    - You are computing total carbon budgets that depend on distinguishing labile from refractory fractions.
+    - Runtime is less critical than geochemical accuracy.
+
+    ```python
+    props_total_array, carbon_model_params = sc.emplace_sills(
+        props_array=props_array,
+        n_sills=200,
+        cool_method='adi',
+        time_steps=time_steps,
+        current_time=current_time,
+        sillsquare=sillsquare,
+        carbon_model_params=carbon_model_params,
+        empl_times=empl_times,
+        volume_params=volume_params,
+        z_index=0,
+        model='sillburp'   # <-- Sillburp selected
+    )
+    ```
+  </Tab>
+</Tabs>
+
+## Initial thermogenic state
+
+Both models are stateful — they carry state arrays (`W` for SILLi, `progress_of_reactions` and `rate_of_reactions` for Sillburp) between time steps. Before you call `emplace_sills()`, you must initialise those state arrays to reflect whatever background thermal maturation the crust has already experienced.
+
+<Note>
+  Never skip the initialisation step. Starting with uninitialised state arrays means the model assumes your rocks have experienced zero thermal maturation, which will overestimate CO₂ emissions at the start of the simulation as the kinetic solver "catches up" to the actual geotherm.
+</Note>
+
+**For SILLi:**
+
+```python
+(current_time, tot_RCO2, props_array,
+ RCO2_silli, Rom_silli, percRo_silli,
+ curr_TOC_silli, W_silli, T_field) = sc.get_silli_initial_thermogenic_state(
+    props_array=props_array,
+    dt=3.15e9,           # 100-year time steps in seconds
+    method='adi',
+    time=3.15e13         # 1 Ma pre-conditioning duration
+)
+
+carbon_model_params = (
+    tot_RCO2, props_array,
+    RCO2_silli, Rom_silli, percRo_silli,
+    curr_TOC_silli, W_silli
+)
+```
+
+**For Sillburp:**
+
+```python
+(current_time, tot_RCO2, props_array,
+ RCO2_sb, Rom_sb, progress_of_reactions,
+ oil_production_rate, curr_TOC_sb,
+ rate_of_reactions, sillburp_weights) = sc.get_sillburp_initial_thermogenic_state(
+    props_array=props_array,
+    dt=3.15e9,
+    method='adi',
+    time=3.15e13
+)
+
+reaction_energies = emit.get_sillburp_reaction_energies()
+
+carbon_model_params = (
+    tot_RCO2, props_array,
+    RCO2_sb, Rom_sb, progress_of_reactions,
+    oil_production_rate, curr_TOC_sb,
+    rate_of_reactions, sillburp_weights
+)
+```
+
+## TOC and porosity
+
+The initial TOC field drives the magnitude of carbon emissions. Choosing realistic values for your lithologies is important:
+
+| Lithology | Typical TOC (wt %) | Typical porosity |
+|-----------|-------------------|-----------------|
+| Marine shale | 2–5 % | 0.05–0.15 |
+| Lacustrine shale | 3–8 % | 0.05–0.12 |
+| Sandstone | 0.3–1 % | 0.15–0.25 |
+| Limestone | 0.5–2 % | 0.10–0.20 |
+| Granite | 0 % | 0.01–0.05 |
+| Basalt | 0 % | 0.00 |
+
+TuLIP reads initial TOC from `rock_prop_dict` for each lithology. You can override per-cell values after building `props_array` by directly setting `props_array[sc.TOC_index]` before calling the initialisation functions.
+
+<Tip>
+  The first call to either `SILLi_emissions()` or `sillburp()` will be noticeably slow — often 10–60 seconds — because Numba JIT-compiles the inner loops for your specific array shapes. Every subsequent call in the same Python session is fast. If you are running many short tests, consider warming up the JIT by calling the emission function once on a small dummy array at the start of your script.
+</Tip>

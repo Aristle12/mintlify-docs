@@ -1,0 +1,74 @@
+---
+title: "TuLIP: 2D Thermal Modeling for Magmatic Sill Intrusions"
+sidebarTitle: "Introduction"
+description: "TuLIP simulates heat diffusion and carbon emissions from sill swarms in Large Igneous Provinces. Model magma emplacement, thermal evolution, and CO₂ degassing."
+---
+
+TuLIP (Thermally Understanding Large Igneous Provinces) is a Python library for simulating the thermal evolution and carbon degassing of magmatic intrusions in the Earth's crust. It combines high-performance 2D heat-transfer solvers with stochastic sill-emplacement algorithms and industry-standard carbon-emission kinetics models to help geoscientists understand how Large Igneous Provinces (LIPs) affect the environment over geological timescales.
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Run your first simulation end-to-end in minutes
+  </Card>
+  <Card title="Installation" icon="download" href="/installation">
+    Set up TuLIP and its dependencies
+  </Card>
+  <Card title="Core Concepts" icon="book-open" href="/concepts/overview">
+    Understand sill emplacement, heat transfer, and emissions
+  </Card>
+  <Card title="Guides" icon="map" href="/guides/building-sill-cube">
+    Step-by-step walkthroughs for common workflows
+  </Card>
+  <Card title="Configuration" icon="sliders" href="/configuration/domain-setup">
+    Customize the model domain, rock properties, and solvers
+  </Card>
+  <Card title="API Reference" icon="code" href="/reference/sill-controls">
+    Full reference for every public class and method
+  </Card>
+</CardGroup>
+
+## What TuLIP does
+
+TuLIP lets you set up a 2D crustal cross-section, populate it with layered rock types, and then stochastically inject swarms of magmatic sills over millions of years. At each time step the library:
+
+- Advances the **temperature field** using an implicit or convolution-based heat-transfer solver
+- **Emplaces sills** according to user-defined flux, volume, depth, and geometry distributions
+- Computes **thermogenic carbon emissions** (CO₂) as rising temperatures bake organic-rich sediments, using either the SILLi (Easy%Ro) or Sillburp multi-kerogen kinetics model
+- Writes **VTK snapshot files** you can open in ParaView for 3D visualization
+
+## Key capabilities
+
+<CardGroup cols={3}>
+  <Card title="Multiple Solvers" icon="calculator">
+    ADI, convolution, and fully implicit heat-transfer methods — choose speed or stability
+  </Card>
+  <Card title="Two Emissions Models" icon="fire">
+    SILLi and Sillburp kinetics give you flexibility to match your geological setting
+  </Card>
+  <Card title="Parallel Runs" icon="server">
+    Built-in joblib integration for sweeping across flux and volume parameter spaces
+  </Card>
+  <Card title="VTK Output" icon="cube">
+    Export temperature, lithology, and emissions fields for 3D visualization in ParaView
+  </Card>
+  <Card title="Numba JIT" icon="bolt">
+    Inner kinetics loops are JIT-compiled for fast time-stepping
+  </Card>
+  <Card title="HDF5 Checkpoints" icon="database">
+    Save and reload simulation state for long-running runs
+  </Card>
+</CardGroup>
+
+## How it's organized
+
+| Module | What it provides |
+|--------|-----------------|
+| `sill_controls` | High-level orchestrator — build sill cubes, run simulations, manage state |
+| `cool` | Heat-transfer solvers and thermal-property lookups |
+| `emit` | Carbon-emission models (SILLi and Sillburp) |
+| `rules` | Sill geometry, stochastic samplers, and mesh-update helpers |
+| `utilities` | Workflow helpers (`cooler`, `sillburp_cooler`, `cubemaker`) for parallel runs |
+
+<Tip>
+  New to TuLIP? Start with the [Quickstart](/quickstart) to run the built-in example simulation, then read [Core Concepts](/concepts/overview) to understand the physics before customizing your own model.
+</Tip>

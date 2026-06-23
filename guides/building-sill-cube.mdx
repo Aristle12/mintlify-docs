@@ -1,0 +1,170 @@
+---
+title: "Build a 3D sill cube for simulation"
+sidebarTitle: "Build Sill Cube"
+description: "Learn how to construct a stochastic 3D sill cube that encodes sill geometry, emplacement locations, and timing before you run a TuLIP simulation."
+---
+
+A **sill cube** is a pre-computed 3D NumPy array that encodes where every sill intrudes into the crust, what shape and size it has, and at what time it is emplaced. Building this geometry once — before the physics loop starts — keeps the computationally expensive stochastic sampling completely separate from the thermal diffusion solver. You can then save the array to disk and reuse it across dozens of parallel simulation runs without regenerating it.
+
+<Steps>
+
+### Create a `sill_controls` object
+
+Instantiate `sill_controls` with the physical dimensions of your model domain. The constructor requires four positional arguments: `x` (horizontal extent in metres), `y` (vertical depth extent in metres), `dx` (horizontal grid spacing), and `dy` (vertical grid spacing).
+
+```python setup.py
+from TuLIP import sill_controls
+
+# Domain: 300 km wide, 12 km deep, 50 m grid spacing
+sc = sill_controls(
+    x=300000,   # Horizontal extent of the crust (m)
+    y=12000,    # Vertical thickness of the modelled section (m)
+    dx=50,      # Node spacing in x-direction (m)
+    dy=50,      # Node spacing in y-direction (m)
+    T_liquidus=1175,   # Magma liquidus temperature (°C)
+    T_solidus=800,     # Magma solidus temperature (°C)
+    include_external_heat=True,
+)
+```
+
+The grid dimensions are derived automatically: `a = int(y // dy)` rows and `b = int(x // dx)` columns. Make sure `x` and `y` are evenly divisible by `dx` and `dy` respectively.
+
+### Call `build_sillcube()`
+
+Pass your geometric and flux parameters to build the sill cube. TuLIP samples random distributions for depth, lateral position, and dimensions, then schedules emplacement times such that the cumulative injected volume matches your target.
+
+```python build_cube.py
+import numpy as np
+
+# Time step (years) — keep below the von Neumann stability limit
+k_val = 31.536  # thermal diffusivity (m²/yr)
+dt = round((min(sc.dx, sc.dy) ** 2) / (5 * k_val), 3)
+
+# --- Geometry parameters ---
+thickness_range = [100, 600, 500]   # [min_m, max_m, std_dev_m]
+aspect_ratio    = [19.23, 9.74]     # [mean, std_dev] width/thickness ratio
+
+# --- Spatial bounds ---
+depth_range = [500, 4000, 5000]           # [min_m, max_m, std_dev_m] emplacement depth
+lat_range   = [sc.x//3, 2*sc.x//3, sc.x//6]  # [min_m, max_m, std_dev_m] lateral position
+z_range     = [0, 300000, 100000]         # [min_m, max_m, std_dev_m] along-strike position
+
+# --- Time phases (years) ---
+thermal_mat_time = int(3e6)          # Pre-emplacement thermal maturation phase
+tot_volume       = int(0.5e6 * 1e9) # Target total injected volume (m³)
+flux             = int(3e9)          # Magma supply rate (m³/yr)
+model_time       = tot_volume / flux # Emplacement duration derived from flux
+cooling_time     = int(1e4)          # Post-emplacement cooling phase
+phase_times      = [thermal_mat_time, model_time, cooling_time]
+
+# Upper bound on sill count for array pre-allocation
+n_sills_estimate = 200000
+
+z = 300000  # Along-strike extent of the domain (m)
+
+sillcube, n_sills, empl_params = sc.build_sillcube(
+    z              = z,
+    dt             = dt,
+    thickness_range= thickness_range,
+    aspect_ratio   = aspect_ratio,
+    depth_range    = depth_range,
+    z_range        = z_range,
+    lat_range      = lat_range,
+    phase_times    = phase_times,
+    tot_volume     = tot_volume,
+    flux           = flux,
+    n_sills        = n_sills_estimate,
+    shape          = 'elli',          # 'elli' (ellipsoid) or 'rect' (rectangular)
+    depth_function = 'normal',        # distribution for emplacement depths
+    lat_function   = 'normal',        # distribution for lateral positions
+    dims_function  = 'normal',        # distribution for sill dimensions
+)
+
+print(f"Actual sills emplaced: {n_sills}")
+```
+
+`build_sillcube()` also saves three diagnostic plots to your `plots/` directory:
+- `Depth<flux>_<vol>.png` — KDE of emplacement depth
+- `WidthThickness<vol>_<flux>.png` — KDE of sill width and thickness
+- `VolumeTime<vol>_<flux>.png` — cumulative volume vs time
+
+### Inspect the returned values
+
+`build_sillcube()` returns a three-element tuple:
+
+```python inspect_returns.py
+sillcube, n_sills, empl_params = sc.build_sillcube(...)
+
+# sillcube   — 3D numpy object array of shape (z_nodes, y_nodes, x_nodes)
+#              Each cell is either '' (host rock) or a string encoding the
+#              sill index and emplacement time, e.g. '0s1234567.0'.
+print("Cube shape:", sillcube.shape)
+
+# n_sills    — integer, the actual number of sills that fit within tot_volume
+print("Sills emplaced:", n_sills)
+
+# empl_params — 2D numpy array with shape (5, n_sills)
+#               Rows: [empl_times, empl_heights, x_space, width, thickness]
+empl_times   = empl_params[0]   # years at which each sill is injected
+empl_heights = empl_params[1]   # grid row indices (depth)
+x_space      = empl_params[2]   # grid column indices (lateral position)
+width        = empl_params[3]   # sill half-width (m)
+thickness    = empl_params[4]   # sill half-thickness (m)
+```
+
+### Save the sill cube for reuse
+
+Serialise the array to a `.npy` binary so parallel workers can load it without rebuilding it. Save the emplacement parameters alongside it as a CSV.
+
+```python save_cube.py
+import numpy as np
+import pandas as pd
+import os
+
+save_dir = f"sillcubes/{flux:.3e}"
+os.makedirs(save_dir, exist_ok=True)
+
+# Save the 3D sill cube
+np.save(f"{save_dir}/sillcube{tot_volume}.npy", sillcube)
+
+# Save emplacement parameters
+empl_frame = pd.DataFrame(
+    empl_params.T,
+    columns=["empl_times", "empl_heights", "x_space", "width", "thickness"],
+)
+empl_frame.to_csv(f"{save_dir}/emplacement_params{tot_volume}.csv")
+
+# Record n_sills so parallel workers can look it up
+n_sills_frame = pd.DataFrame({"n_sills": [n_sills], "volumes": [tot_volume]})
+n_sills_frame.to_csv(f"{save_dir}/n_sills.csv", index=False)
+
+print("Sill cube saved to", save_dir)
+```
+
+</Steps>
+
+## Parameter reference
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `z` | `float` | Along-strike extent of the domain (m). Controls the third dimension of the cube. |
+| `dt` | `float` | Time step (years). Must satisfy the von Neumann stability criterion. |
+| `thickness_range` | `list[float]` | `[min, max, std_dev]` for sill thickness in metres. |
+| `aspect_ratio` | `list[float]` | `[mean, std_dev]` of the width-to-thickness ratio. |
+| `depth_range` | `list[float]` | `[min, max, std_dev]` for emplacement depth below surface (m). |
+| `z_range` | `list[float]` | `[min, max, std_dev]` for along-strike sill position (m). |
+| `lat_range` | `list[float]` | `[min, max, std_dev]` for lateral (x) sill position (m). |
+| `phase_times` | `list[float]` | `[thermal_maturation_time, emplacement_time, cooling_time]` in years. |
+| `tot_volume` | `float` | Target total injected magma volume (m³). Loop stops once this is reached. |
+| `flux` | `float` | Magma supply rate (m³/yr). Controls the pacing of emplacement events. |
+| `n_sills` | `int` | Upper bound on sill count used to pre-allocate geometry arrays. |
+| `shape` | `str` | `'elli'` for ellipsoidal sills or `'rect'` for rectangular sills. Default: `'elli'`. |
+| `depth_function` | `str \| callable` | Distribution for sampling emplacement depths: `'normal'`, `'uniform'`, or `'empirical'`. Default: `'normal'`. |
+| `lat_function` | `str \| callable` | Distribution for sampling lateral positions: `'normal'`, `'uniform'`, or `'empirical'`. Default: `'normal'`. |
+| `dims_function` | `str \| callable` | Distribution for sampling sill dimensions: `'normal'`, `'uniform'`, `'scaled'`, or `'empirical'`. Default: `'normal'`. |
+| `emplace_dike` | `bool` | If `True`, adds a feeder dike tail to each sill. Default: `False`. |
+| `orientations` | `array \| None` | Optional per-sill orientation angles. Default: `None`. |
+
+<Tip>
+Build your sill cube **once** and save it with `np.save()` before launching a parameter sweep. Every parallel worker can then call `np.load(..., allow_pickle=True)` to retrieve the same geometry, ensuring that all runs in a batch are directly comparable and eliminating redundant computation. See the [Parallel Runs](/guides/parallel-runs) guide for how `utilities.cooler()` loads sill cubes automatically.
+</Tip>

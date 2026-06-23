@@ -1,0 +1,94 @@
+{
+  "projectType": "ai-ml",
+  "projectName": "TuLIP",
+  "projectDescription": "A Python toolkit for simulating the thermal evolution and carbon emissions of magmatic sill intrusions in two dimensions, designed for geoscientists studying Large Igneous Provinces.",
+  "theme": "palm",
+  "primaryColor": "#1474ec",
+  "lightColor": "#7cb4e8",
+  "darkColor": "#25835d",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "installation"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "concepts/overview",
+              "concepts/sill-emplacement",
+              "concepts/heat-transfer",
+              "concepts/carbon-emissions"
+            ]
+          },
+          {
+            "group": "Guides",
+            "pages": [
+              "guides/building-sill-cube",
+              "guides/running-simulation",
+              "guides/parallel-runs",
+              "guides/analyzing-results",
+              "guides/vtk-visualization"
+            ]
+          },
+          {
+            "group": "Configuration",
+            "pages": [
+              "configuration/domain-setup",
+              "configuration/rock-properties",
+              "configuration/solvers",
+              "configuration/emissions-models"
+            ]
+          },
+          {
+            "group": "Reference",
+            "pages": [
+              "reference/sill-controls",
+              "reference/cool",
+              "reference/emit",
+              "reference/rules",
+              "reference/utilities"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "2D heat diffusion simulation with multiple solver methods (ADI, convolution, implicit)",
+    "Stochastic sill swarm emplacement with configurable flux, volume, depth, and geometry",
+    "SILLi (Easy%Ro vitrinite reflectance) carbon emissions model",
+    "Sillburp multi-kerogen kinetics carbon emissions model",
+    "Parallel simulation runs via joblib across flux/volume parameter space",
+    "VTK output compatible with ParaView for 3D visualization",
+    "Numba JIT-accelerated inner kinetics loops",
+    "Sill thermal interaction network analysis via NetworkX KD-Tree proximity graphs",
+    "Latent heat and radiogenic heat source terms",
+    "HDF5 serialization for checkpoint/restart workflows"
+  ],
+  "publicApiSurface": [
+    "sill_controls.__init__(x, y, dx, dy, ...)",
+    "sill_controls.build_sillcube(z, dt, thickness_range, aspect_ratio, depth_range, ...)",
+    "sill_controls.emplace_sills(props_array, n_sills, cool_method, time_steps, ...)",
+    "sill_controls.get_silli_initial_thermogenic_state(props_array, dt, method, time)",
+    "sill_controls.get_sillburp_initial_thermogenic_state(props_array, dt, method, time)",
+    "cool.diff_solve(k, a, b, dx, dy, dt, Tnow, q, method, H, k_const)",
+    "cool.conv_smooth_solve_adi(k, a, b, dx, dy, dt, Tnow, q, Af, H)",
+    "cool.get_conductivity(T_field, rock, density, dy)",
+    "emit.SILLi_emissions(T_field, density, lithology, porosity, TOC_prev, dt, ...)",
+    "emit.sillburp(T_field, TOC_prev, density, lithology, porosity, dt, ...)",
+    "rules.mult_sill(T_field, majr, minr, height, x_space, dx, dy, rock, ...)",
+    "rules.sill_3Dcube(x, y, z, dx, dy, n_sills, ...)",
+    "utilities.cooler(iter, z_index, flux, sc, ...)",
+    "utilities.sillburp_cooler(iter, z_index, flux, sc, ...)",
+    "utilities.cubemaker(lat_range, vol_range, sc, ...)",
+    "examples.example_run()"
+  ]
+}

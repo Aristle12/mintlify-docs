@@ -1,0 +1,559 @@
+---
+title: "sill_controls class reference"
+sidebarTitle: "sill_controls"
+description: "Complete reference for sill_controls, the orchestration class that wires together cooling physics, geometry rules, and property management for TuLIP simulations."
+---
+
+The `sill_controls` class is the central controller for a TuLIP simulation. It links the heat-transfer solvers in `cool`, the geometric utilities in `rules`, and the carbon-emission models in `emit` into a single coherent workflow. You instantiate `sill_controls` once with your grid dimensions and configuration, then call its methods to build stochastic sill swarms, establish pre-emplacement thermal states, and run the time-stepping loop.
+
+All property arrays inside TuLIP are indexed by the constants `Temp_index`, `rock_index`, `poros_index`, `dense_index`, `TOC_index`, and `sph_index` that `sill_controls.__init__` sets on the instance.
+
+---
+
+## `__init__`
+
+```python
+sill_controls(
+    x, y, dx, dy,
+    T_liquidus=1250, T_solidus=800,
+    include_external_heat=True,
+    k_const=True, kc_val=7.884e7,
+    cp=1, cp_const=True,
+    calculate_closest_sill=False,
+    rock_prop_dict=None, magma_prop_dict=None,
+    sill_cube_dir='sillcubes/',
+    k_func=None, cp_func=None,
+    melt_rock='basalt',
+    melt_fraction_function=None
+)
+```
+
+Creates and configures the simulation controller. Required parameters define the grid; all others tune physical behaviour and optional features.
+
+### Parameters
+
+<ParamField path="x" type="float" required>
+  Horizontal extent of the crustal block in metres.
+</ParamField>
+
+<ParamField path="y" type="float" required>
+  Vertical thickness of the crustal block in metres.
+</ParamField>
+
+<ParamField path="dx" type="float" required>
+  Grid node spacing along the horizontal axis (metres).
+</ParamField>
+
+<ParamField path="dy" type="float" required>
+  Grid node spacing along the vertical axis (metres).
+</ParamField>
+
+<ParamField path="T_liquidus" type="float" default="1250">
+  Magma liquidus temperature (°C). Used by `cool.calcF` and `cool.get_latH`.
+</ParamField>
+
+<ParamField path="T_solidus" type="float" default="800">
+  Magma solidus temperature (°C). Nodes below this are converted back to the host rock type during cooling.
+</ParamField>
+
+<ParamField path="include_external_heat" type="bool" default="True">
+  When `True`, calculates latent heat of crystallisation and radiogenic heat at every time step.
+</ParamField>
+
+<ParamField path="k_const" type="bool" default="True">
+  When `True`, uses a spatially uniform thermal conductivity equal to `kc_val`. Set to `False` to use `k_func` for temperature-dependent conductivity.
+</ParamField>
+
+<ParamField path="kc_val" type="float" default="7.884e7">
+  Constant thermal conductivity value (W m⁻¹ K⁻¹ × year conversion). Used only when `k_const=True`.
+</ParamField>
+
+<ParamField path="cp" type="float" default="1">
+  Reference specific heat capacity. Used as a fallback during initialisation.
+</ParamField>
+
+<ParamField path="cp_const" type="bool" default="True">
+  When `True`, looks up specific heat from the rock property dictionary rather than calling `cp_func`.
+</ParamField>
+
+<ParamField path="calculate_closest_sill" type="bool" default="False">
+  Enables proximity analysis between intrusions via `check_closest_sill_temp`. Results are saved to CSV.
+</ParamField>
+
+<ParamField path="rock_prop_dict" type="dict | None" default="None">
+  Dictionary mapping rock-type strings to physical properties. Keys must include `Porosity`, `Density`, `TOC`, `Specific Heat`, and `Latent Heat Org`. When `None`, a built-in dictionary covering `shale`, `sandstone`, `limestone`, `granite`, `basalt`, and `peridotite` is used.
+</ParamField>
+
+<ParamField path="magma_prop_dict" type="dict | None" default="None">
+  Dictionary of magma properties (`Temperature`, `Lithology`, `Porosity`, `Density`, `Specific Heat`, `Latent Heat`, `TOC`). Defaults to basaltic melt at 1100 °C with density 2850 kg m⁻³.
+</ParamField>
+
+<ParamField path="sill_cube_dir" type="str" default="'sillcubes/'">
+  Root directory used for reading and writing sill cube files.
+</ParamField>
+
+<ParamField path="k_func" type="callable | None" default="None">
+  Custom function `k_func(T_field, rock, density, dy)` returning thermal conductivity. Falls back to `cool.get_conductivity` when `None`.
+</ParamField>
+
+<ParamField path="cp_func" type="callable | None" default="None">
+  Custom function `cp_func(T_field, rock, density, dy)` returning specific heat. Falls back to `cool.get_specific_heat` when `None`.
+</ParamField>
+
+<ParamField path="melt_rock" type="str" default="'basalt'">
+  String label of the solidified intrusion rock type used when magma cools below `T_solidus`.
+</ParamField>
+
+<ParamField path="melt_fraction_function" type="callable | None" default="None">
+  Custom melt-fraction function `F(T_field, *args)`. When `None`, uses the built-in `cool.calcF` tanh-based smooth step.
+</ParamField>
+
+### Example
+
+```python
+from TuLIP import sill_controls
+
+sc = sill_controls(
+    x=300_000,   # 300 km wide
+    y=12_000,    # 12 km deep
+    dx=50,
+    dy=50,
+    T_liquidus=1200,
+    T_solidus=800,
+    k_const=True,
+    kc_val=7.884e7,
+)
+print(sc.Temp_index)   # 0
+print(sc.rock_index)   # 1
+```
+
+---
+
+## `build_sillcube`
+
+```python
+sc.build_sillcube(
+    z, dt,
+    thickness_range, aspect_ratio,
+    depth_range, z_range, lat_range,
+    phase_times, tot_volume, flux, n_sills,
+    shape='elli',
+    depth_function=None, lat_function=None, dims_function=None,
+    emplace_dike=False, orientations=None
+)
+```
+
+Generates a stochastic 3D sill swarm. The method samples spatial distributions for depth, lateral position, and dimensions; schedules emplacement times based on the target magma flux; and assembles the result into a 3-D string array that encodes which sill occupies each voxel at what time.
+
+### Parameters
+
+<ParamField path="z" type="float" required>
+  Z-dimension extent of the crustal block (metres).
+</ParamField>
+
+<ParamField path="dt" type="float" required>
+  Simulation time step (years). Used to construct the emplacement schedule.
+</ParamField>
+
+<ParamField path="thickness_range" type="list[float]" required>
+  `[min_thickness, max_thickness, sd_thickness]` in metres. The standard deviation controls the spread of the normal distribution used when `dims_function` is `'normal'` (the default).
+</ParamField>
+
+<ParamField path="aspect_ratio" type="list[float]" required>
+  `[mean_AR, sd_AR]`. Aspect ratio is defined as width / thickness. A positive aspect ratio is enforced.
+</ParamField>
+
+<ParamField path="depth_range" type="list[float]" required>
+  `[min_depth, max_depth, sd_depth]` in metres (depth measured downward from surface).
+</ParamField>
+
+<ParamField path="z_range" type="list[float]" required>
+  `[z_min, z_max, sd_z]` — the range of Z-coordinates sampled for sill centres.
+</ParamField>
+
+<ParamField path="lat_range" type="list[float]" required>
+  `[x_min, x_max, sd_x]` — lateral position range for sill centres (metres).
+</ParamField>
+
+<ParamField path="phase_times" type="list[float]" required>
+  `[thermal_maturation_time, cooling_time]` in years. Emplacement starts after `thermal_maturation_time`.
+</ParamField>
+
+<ParamField path="tot_volume" type="float" required>
+  Target total magma volume (m³). Emplacement stops when cumulative volume exceeds this value.
+</ParamField>
+
+<ParamField path="flux" type="float" required>
+  Magma supply rate (m³ yr⁻¹). Sets the pace of the emplacement schedule.
+</ParamField>
+
+<ParamField path="n_sills" type="int" required>
+  Upper bound on the number of sills used to pre-allocate geometry arrays.
+</ParamField>
+
+<ParamField path="shape" type="str" default="'elli'">
+  Sill cross-section: `'elli'` for ellipsoidal or `'rect'` for rectangular.
+</ParamField>
+
+<ParamField path="depth_function" type="str | callable | None" default="None">
+  Depth-sampling distribution: `'normal'` (default), `'uniform'`, or `'empirical'`. Pass a callable for a custom sampler.
+</ParamField>
+
+<ParamField path="lat_function" type="str | callable | None" default="None">
+  Lateral-position distribution: `'normal'` (default), `'uniform'`, or `'empirical'`.
+</ParamField>
+
+<ParamField path="dims_function" type="str | callable | None" default="None">
+  Dimension-sampling method: `'normal'` (default), `'uniform'`, `'scaled'`, or `'empirical'`.
+</ParamField>
+
+<ParamField path="emplace_dike" type="bool" default="False">
+  When `True`, adds a vertical feeder dike tail to each sill in the cube.
+</ParamField>
+
+<ParamField path="orientations" type="numpy.ndarray | None" default="None">
+  Rotation angles (degrees) for dike tails. Randomly sampled when `emplace_dike=True` and `None`.
+</ParamField>
+
+### Returns
+
+<ResponseField name="sillcube" type="numpy.ndarray (dtype=object, shape=(c, a, b))">
+  3-D array of strings. Each non-empty cell contains one or more entries of the form `"_N​s​T"` where `N` is the sill ID and `T` is the emplacement time.
+</ResponseField>
+
+<ResponseField name="n_sills" type="int">
+  Actual number of sills emplaced after volume truncation.
+</ResponseField>
+
+<ResponseField name="empl_params" type="numpy.ndarray (shape=(5, n_sills))">
+  Row-stacked emplacement parameters: `[empl_times, empl_heights, x_space, width, thickness]`.
+</ResponseField>
+
+### Example
+
+```python
+sillcube, n_sills, empl_params = sc.build_sillcube(
+    z=300_000,
+    dt=0.5,
+    thickness_range=[100, 600, 500],
+    aspect_ratio=[19.23, 9.74],
+    depth_range=[500, 4000, 5000],
+    z_range=[0, 300_000, 100_000],
+    lat_range=[100_000, 200_000, 50_000],
+    phase_times=[1e6, 1e4],
+    tot_volume=0.5e6 * 1e9,
+    flux=30e9,
+    n_sills=200_000,
+    shape='elli',
+)
+print(f"Built {n_sills} sills")
+```
+
+---
+
+## `emplace_sills`
+
+```python
+sc.emplace_sills(
+    props_array, n_sills, cool_method,
+    time_steps, current_time,
+    sillsquare, carbon_model_params,
+    empl_times, volume_params, z_index,
+    saving_factor=None, save_dir=None,
+    model=None, dt=None, q=np.nan,
+    rock_prop_dict=None, lith_plot_dict=None,
+    prop_dict=None, magma_prop_dict=None
+)
+```
+
+Runs the full time-stepping loop: heat diffusion, sill emplacement from the pre-computed `sillsquare`, carbon-emission modelling, rock-type updating, and optional VTK output. This is the main simulation driver.
+
+### Parameters
+
+<ParamField path="props_array" type="numpy.ndarray (dtype=object, shape=(6, a, b))" required>
+  Stacked property fields in axis-0 order: `[Temperature, Lithology, Porosity, Density, TOC, Specific Heat]`. Indexed by `sc.Temp_index`, `sc.rock_index`, etc.
+</ParamField>
+
+<ParamField path="n_sills" type="int" required>
+  Number of sills to emplace from `sillsquare`.
+</ParamField>
+
+<ParamField path="cool_method" type="str" required>
+  Heat-diffusion solver passed to `cool.diff_solve`. One of `'conv smooth'`, `'conv chain'`, `'adi'`, `'smooth'`, or `'chain'`.
+</ParamField>
+
+<ParamField path="time_steps" type="numpy.ndarray" required>
+  Monotonically increasing array of simulation times (years).
+</ParamField>
+
+<ParamField path="current_time" type="float" required>
+  Simulation start time (years). The loop begins at the index where `time_steps == current_time`.
+</ParamField>
+
+<ParamField path="sillsquare" type="numpy.ndarray (dtype=object, shape=(a, b))" required>
+  2-D slice of the 3-D sill cube at the chosen Z-index. Generated by `generate_sill_2D_slices`.
+</ParamField>
+
+<ParamField path="carbon_model_params" type="tuple" required>
+  Initial carbon-model state returned by `get_silli_initial_thermogenic_state` or `get_sillburp_initial_thermogenic_state`. Layout depends on `model`.
+</ParamField>
+
+<ParamField path="empl_times" type="numpy.ndarray" required>
+  Per-sill emplacement times (years), from column 0 of `empl_params`.
+</ParamField>
+
+<ParamField path="volume_params" type="list[float]" required>
+  `[flux, tot_volume]`. Used for output path construction.
+</ParamField>
+
+<ParamField path="z_index" type="int" required>
+  Z-slice index corresponding to the current 2-D model plane.
+</ParamField>
+
+<ParamField path="saving_factor" type="list[int] | None" default="None">
+  Save VTK output every `saving_factor[0]` steps during emplacement and every `saving_factor[1]` steps during cooling (when two values are given). Pass a single-element list for a uniform cadence.
+</ParamField>
+
+<ParamField path="save_dir" type="str | None" default="None">
+  Output directory for VTK files. Auto-constructed from flux and volume when `None`.
+</ParamField>
+
+<ParamField path="model" type="str | None" default="None">
+  Carbon-emission model to activate: `'silli'`, `'sillburp'`, or `None` (no carbon tracking).
+</ParamField>
+
+<ParamField path="dt" type="float | None" default="None">
+  Override time step. When `None`, `dt` is derived from consecutive differences in `time_steps`.
+</ParamField>
+
+<ParamField path="q" type="float | numpy.ndarray" default="numpy.nan">
+  Bottom-boundary heat flux (W m⁻²). `numpy.nan` enforces a Dirichlet (fixed-temperature) lower boundary.
+</ParamField>
+
+### Returns
+
+<ResponseField name="carbon_model_params" type="tuple">
+  Updated carbon-model state. For `model='silli'`: `(tot_RCO2, tot_melt10, tot_melt50, tot_solidus, area_sills, props_array, RCO2_silli, Rom_silli, percRo_silli, curr_TOC_silli, W_silli)`. For `model='sillburp'` an analogous tuple with Sillburp-specific arrays. For `model=None`: `props_array` only.
+</ResponseField>
+
+### Example
+
+```python
+carbon_model_params = sc.emplace_sills(
+    props_array=props_array,
+    n_sills=n_sills,
+    cool_method='conv smooth',
+    time_steps=time_steps,
+    current_time=current_time,
+    sillsquare=sillsquare,
+    carbon_model_params=carbon_model_params,
+    empl_times=empl_times,
+    volume_params=[flux, tot_volume],
+    z_index=0,
+    saving_factor=[100],
+    save_dir='results/run_01/0',
+    model='silli',
+    q=q,
+)
+tot_RCO2 = carbon_model_params[0]
+```
+
+---
+
+## `get_silli_initial_thermogenic_state`
+
+```python
+sc.get_silli_initial_thermogenic_state(
+    props_array, dt, method,
+    time=np.nan,
+    lith_plot_dict=None,
+    rock_prop_dict=None
+)
+```
+
+Advances the model through a thermal-maturation phase (before any sills are emplaced) using the SILLi Easy%Ro carbon model. Call this to establish a realistic baseline TOC and vitrinite-reflectance field before calling `emplace_sills`.
+
+### Parameters
+
+<ParamField path="props_array" type="numpy.ndarray" required>
+  Initial property array (same layout as for `emplace_sills`).
+</ParamField>
+
+<ParamField path="dt" type="float" required>
+  Time step (years). Automatically reduced if it violates the stability criterion.
+</ParamField>
+
+<ParamField path="method" type="str" required>
+  Heat-diffusion solver name (e.g. `'conv smooth'`).
+</ParamField>
+
+<ParamField path="time" type="float" default="numpy.nan">
+  Duration of the maturation phase (years). When `numpy.nan`, the loop runs until the CO2 rate converges (change < 1 × 10⁻³).
+</ParamField>
+
+### Returns
+
+<ResponseField name="current_time" type="float">
+  Simulation time at the end of this phase (years).
+</ResponseField>
+
+<ResponseField name="tot_RCO2" type="list[float]">
+  Time series of total CO2 emission per step (kg yr⁻¹).
+</ResponseField>
+
+<ResponseField name="props_array" type="numpy.ndarray">
+  Updated property array with thermally matured TOC and temperature.
+</ResponseField>
+
+<ResponseField name="RCO2_silli" type="numpy.ndarray">
+  Per-node CO2 rate at the end of this phase.
+</ResponseField>
+
+<ResponseField name="Rom_silli" type="numpy.ndarray">
+  Per-node organic matter loss rate.
+</ResponseField>
+
+<ResponseField name="percRo_silli" type="numpy.ndarray">
+  Vitrinite reflectance (%Ro) field.
+</ResponseField>
+
+<ResponseField name="curr_TOC_silli" type="numpy.ndarray">
+  Updated total organic carbon field.
+</ResponseField>
+
+<ResponseField name="W_silli" type="numpy.ndarray (shape=(20, a, b))">
+  Easy%Ro state variable (remaining reaction potential per channel).
+</ResponseField>
+
+<ResponseField name="T_field" type="numpy.ndarray">
+  Final temperature field.
+</ResponseField>
+
+### Example
+
+```python
+params = sc.get_silli_initial_thermogenic_state(
+    props_array, dt=0.5, method='conv smooth', time=1e6
+)
+current_time = params[0]
+carbon_model_params = params[1:]   # unpack for emplace_sills
+```
+
+---
+
+## `get_sillburp_initial_thermogenic_state`
+
+```python
+sc.get_sillburp_initial_thermogenic_state(
+    props_array, dt, method,
+    sillburp_weights=None,
+    time=np.nan,
+    lith_plot_dict=None,
+    rock_prop_dict=None
+)
+```
+
+Equivalent to `get_silli_initial_thermogenic_state` but uses the multi-kerogen Sillburp kinetic model instead of Easy%Ro. Use when you need separate tracking of labile, refractory, and inert kerogen fractions.
+
+### Parameters
+
+<ParamField path="props_array" type="numpy.ndarray" required>
+  Initial property array.
+</ParamField>
+
+<ParamField path="dt" type="float" required>
+  Time step (years).
+</ParamField>
+
+<ParamField path="method" type="str" required>
+  Heat-diffusion solver name.
+</ParamField>
+
+<ParamField path="sillburp_weights" type="numpy.ndarray | None" default="None">
+  Optional weighting array of shape `(4, a, b)` for the four kerogen-reaction channels.
+</ParamField>
+
+<ParamField path="time" type="float" default="numpy.nan">
+  Duration (years). Converges automatically when `numpy.nan`.
+</ParamField>
+
+### Returns
+
+<ResponseField name="current_time" type="float">
+  End time of the maturation phase (years).
+</ResponseField>
+
+<ResponseField name="tot_RCO2" type="list[float]">
+  CO2 time series.
+</ResponseField>
+
+<ResponseField name="props_array" type="numpy.ndarray">
+  Updated properties.
+</ResponseField>
+
+<ResponseField name="RCO2" type="numpy.ndarray">
+  Per-node CO2 rate.
+</ResponseField>
+
+<ResponseField name="Rom" type="numpy.ndarray">
+  Organic matter loss rate.
+</ResponseField>
+
+<ResponseField name="progress_of_reactions" type="numpy.ndarray (shape=(4, max_reactions, a, b))">
+  Fractional completion of each Sillburp reaction channel.
+</ResponseField>
+
+<ResponseField name="oil_production_rate" type="numpy.ndarray">
+  Rate of oil generation / cracking.
+</ResponseField>
+
+<ResponseField name="curr_TOC" type="numpy.ndarray">
+  Updated TOC field.
+</ResponseField>
+
+<ResponseField name="rate_of_reactions" type="numpy.ndarray">
+  Current reaction rates.
+</ResponseField>
+
+<ResponseField name="sillburp_weights" type="numpy.ndarray | None">
+  Passed through unchanged.
+</ResponseField>
+
+<ResponseField name="T_field" type="numpy.ndarray">
+  Final temperature field.
+</ResponseField>
+
+---
+
+## `generate_sill_2D_slices`
+
+```python
+sc.generate_sill_2D_slices(
+    fluxy_list, iter_list, z_index_list,
+    lat_range=None, file_dir=None, clear_all=True
+)
+```
+
+Extracts 2-D cross-sectional slices from pre-built 3-D sill cubes and saves each slice as a `.npy` file. Run this once after `cubemaker` and before `cooler` or `sillburp_cooler` to prepare the per-slice inputs for parallel 2-D simulation runs.
+
+`fluxy_list` is a list of flux values used to locate the appropriate subdirectories under `file_dir`. `iter_list` selects volume iterations from the `n_sills.csv` index file. `z_index_list` specifies which Z-slices to extract.
+
+---
+
+## `store_objlist_as_hd5f` / `load_objlist_from_hd5f_into_class`
+
+```python
+sill_controls.store_objlist_as_hd5f(fileName, cls)
+sc.load_objlist_from_hd5f_into_class(fileName)
+```
+
+**Checkpoint / restart utilities.** `store_objlist_as_hd5f` is a static method that serialises all scalar, array, string, and dictionary attributes of an object to an HDF5 file. `load_objlist_from_hd5f_into_class` reads that file back and sets each key as an attribute on `self`, then calls `update_material_prop` and `model_setup` to restore derived state. Use these to save and resume long simulations.
+
+```python
+# Save
+sill_controls.store_objlist_as_hd5f('checkpoint.h5', sc)
+
+# Restore
+sc2 = sill_controls(x=300_000, y=12_000, dx=50, dy=50)
+sc2.load_objlist_from_hd5f_into_class('checkpoint.h5')
+```

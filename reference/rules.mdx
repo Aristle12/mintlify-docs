@@ -1,0 +1,451 @@
+---
+title: "rules class: sill geometry and mesh reference"
+sidebarTitle: "rules"
+description: "Reference for the rules class: sill emplacement geometry, stochastic samplers, 3D cube construction, and stratigraphic mesh-displacement utilities in TuLIP."
+---
+
+The `rules` class collects geometric and mesh-manipulation utilities for TuLIP. It handles the placement of single and multiple sills into temperature fields, the construction of the 3-D sill-geometry cube used to drive parallel 2-D simulations, and the stratigraphic displacement of existing rock columns when a sill intrudes. It also provides a family of stochastic samplers used by `sill_controls.build_sillcube` to generate random depth, lateral-position, and dimension distributions.
+
+---
+
+## `mult_sill`
+
+```python
+rules.mult_sill(
+    T_field, majr, minr, height, x_space,
+    dx, dy,
+    rock=np.array([]),
+    emplace_rock='basalt', T_mag=1000,
+    shape='elli', dike_empl=True, push=False
+)
+```
+
+Emplaces a single sill with full options: shape, optional lithology-map update, optional stratigraphic displacement (`push`), and an optional vertical feeder dike. Despite the name, this is the primary per-sill emplacement kernel.
+
+### Parameters
+
+<ParamField path="T_field" type="numpy.ndarray (shape=(a, b))" required>
+  Temperature field to modify.
+</ParamField>
+
+<ParamField path="majr" type="float" required>
+  Major axis length (width) of the sill in metres. Converted to node count internally via `majr // dx`.
+</ParamField>
+
+<ParamField path="minr" type="float" required>
+  Minor axis length (thickness) of the sill in metres. Converted via `minr // dy`.
+</ParamField>
+
+<ParamField path="height" type="float" required>
+  Row index of the sill centre.
+</ParamField>
+
+<ParamField path="x_space" type="float" required>
+  Column index of the sill centre.
+</ParamField>
+
+<ParamField path="dx" type="float" required>
+  Lateral grid spacing (m).
+</ParamField>
+
+<ParamField path="dy" type="float" required>
+  Vertical grid spacing (m).
+</ParamField>
+
+<ParamField path="rock" type="numpy.ndarray" default="np.array([])">
+  Lithology map to update simultaneously. When empty (default), only `T_field` is modified.
+</ParamField>
+
+<ParamField path="emplace_rock" type="str" default="'basalt'">
+  Rock-type string assigned to intruded nodes when `rock` is provided.
+</ParamField>
+
+<ParamField path="T_mag" type="float" default="1000">
+  Magma emplacement temperature (°C).
+</ParamField>
+
+<ParamField path="shape" type="str" default="'elli'">
+  `'elli'` for an ellipse or `'rect'` for a rectangle.
+</ParamField>
+
+<ParamField path="dike_empl" type="bool" default="True">
+  When `True`, sets a vertical column of cells from the sill centre to the bottom boundary to `T_mag`, simulating a feeder dike.
+</ParamField>
+
+<ParamField path="push" type="bool" default="False">
+  When `True`, calls `value_pusher2D` to displace existing strata downward instead of overwriting them. Use this for physically realistic intrusion of sills into layered stratigraphy.
+</ParamField>
+
+### Returns
+
+When `rock` is provided:
+- `T_field` (updated)
+- `rock` (updated)
+- `new_dike` (binary mask of intruded nodes)
+
+When `rock` is empty:
+- `T_field` (updated)
+- `new_dike` (binary mask)
+
+### Example
+
+```python
+from TuLIP import rules
+import numpy as np
+
+r = rules()
+a, b = 100, 200
+T = np.zeros((a, b))
+rock = np.empty((a, b), dtype=object); rock[:] = 'shale'
+
+T, rock, mask = r.mult_sill(
+    T, majr=5000, minr=200,
+    height=50, x_space=100,
+    dx=50, dy=50,
+    rock=rock, emplace_rock='basalt',
+    T_mag=1100, shape='elli', push=False
+)
+```
+
+---
+
+## `single_sill`
+
+```python
+rules.single_sill(T_field, x_space, height, width, thick, T_mag)
+```
+
+Emplaces a simple rectangular sill by setting a block of cells to `T_mag`. All parameters are in grid-node units (not metres). This is a lightweight alternative to `mult_sill` when you do not need shape options, dikes, or lithology updates.
+
+### Parameters
+
+<ParamField path="T_field" type="numpy.ndarray" required>
+  Temperature field (modified in place).
+</ParamField>
+
+<ParamField path="x_space" type="int" required>
+  Centre column index.
+</ParamField>
+
+<ParamField path="height" type="int" required>
+  Centre row index.
+</ParamField>
+
+<ParamField path="width" type="int" required>
+  Half-width of the sill in nodes (total width = `width` nodes).
+</ParamField>
+
+<ParamField path="thick" type="int" required>
+  Total thickness in nodes.
+</ParamField>
+
+<ParamField path="T_mag" type="float" required>
+  Magma temperature (°C).
+</ParamField>
+
+### Returns
+
+<ResponseField name="T_field" type="numpy.ndarray">
+  Updated temperature field.
+</ResponseField>
+
+---
+
+## `sill_3Dcube`
+
+```python
+rules.sill_3Dcube(
+    x, y, z, dx, dy, n_sills,
+    x_coords, y_coords, z_coords,
+    maj_dims, min_dims, empl_times,
+    shape='elli', dike_tail=False,
+    orientations=True, dike_width=None
+)
+```
+
+Pre-computes a 3-D string array that maps every voxel of the crustal block to the set of sills that occupy it and their emplacement times. Each occupied voxel receives a string like `"_3s1000"` (sill 3, emplaced at time 1000). Multiple sills in the same voxel are concatenated. This cube is the primary input for `emplace_3Dsill` and is saved by `build_sillcube`.
+
+### Parameters
+
+<ParamField path="x, y, z" type="float" required>
+  Physical dimensions of the crustal block (m).
+</ParamField>
+
+<ParamField path="dx, dy" type="float" required>
+  Grid spacing (m). Z dimension is also discretised using `dx`.
+</ParamField>
+
+<ParamField path="n_sills" type="int" required>
+  Number of sills to encode.
+</ParamField>
+
+<ParamField path="x_coords, y_coords, z_coords" type="numpy.ndarray (length=n_sills)" required>
+  Centre coordinates of each sill (grid-node indices).
+</ParamField>
+
+<ParamField path="maj_dims, min_dims" type="numpy.ndarray (length=n_sills)" required>
+  Major (width) and minor (thickness) half-axes in metres. Converted to nodes internally.
+</ParamField>
+
+<ParamField path="empl_times" type="numpy.ndarray (length=n_sills)" required>
+  Emplacement time for each sill (years), used as the time tag in the voxel strings.
+</ParamField>
+
+<ParamField path="shape" type="str" default="'elli'">
+  `'elli'` or `'rect'`.
+</ParamField>
+
+<ParamField path="dike_tail" type="bool" default="False">
+  When `True`, adds a rotated dike tail to each sill according to `orientations`.
+</ParamField>
+
+<ParamField path="orientations" type="numpy.ndarray | bool | None" default="True">
+  Rotation angles (degrees) for dike tails. Randomly sampled when `dike_tail=True` and `orientations=None`.
+</ParamField>
+
+<ParamField path="dike_width" type="float | None" default="None">
+  Width of the dike in metres. Defaults to `dx`.
+</ParamField>
+
+### Returns
+
+<ResponseField name="sillcube" type="numpy.ndarray (dtype=object, shape=(c, a, b))">
+  3-D array of concatenated sill-ID strings. Empty string `''` at unoccupied voxels.
+</ResponseField>
+
+---
+
+## `emplace_3Dsill`
+
+```python
+rules.emplace_3Dsill(T_field, sillcube, n_rep, T_mag, z_index, curr_empl_time)
+```
+
+Emplaces a specific sill from the 3-D sill cube into a 2-D temperature slice. Searches the 2-D slice `sillcube[z_index]` for the string key `"{n_rep}s{curr_empl_time}"` and sets those nodes to `T_mag`.
+
+### Parameters
+
+<ParamField path="T_field" type="numpy.ndarray (shape=(a, b))" required>
+  2-D temperature slice to update.
+</ParamField>
+
+<ParamField path="sillcube" type="numpy.ndarray (3-D)" required>
+  The full 3-D sill cube.
+</ParamField>
+
+<ParamField path="n_rep" type="int" required>
+  Sill ID to emplace.
+</ParamField>
+
+<ParamField path="T_mag" type="float" required>
+  Magma emplacement temperature (°C).
+</ParamField>
+
+<ParamField path="z_index" type="int" required>
+  Z-slice index corresponding to the current 2-D model plane.
+</ParamField>
+
+<ParamField path="curr_empl_time" type="float" required>
+  Emplacement time used to match the voxel string.
+</ParamField>
+
+### Returns
+
+<ResponseField name="T_field" type="numpy.ndarray (shape=(a, b))">
+  Updated temperature field with the sill emplaced.
+</ResponseField>
+
+---
+
+## `value_pusher`
+
+```python
+rules.value_pusher(array, new_value, push_index, push_value)
+```
+
+Inserts a new value into a 1-D column slice of a 2-D array and shifts existing values downward. Operates on a single column `y` at row `x`, pushing `push_value` rows.
+
+<ParamField path="array" type="numpy.ndarray" required>
+  2-D target array (modified in place and returned).
+</ParamField>
+
+<ParamField path="new_value" type="float | int" required>
+  Value to insert at `push_index`.
+</ParamField>
+
+<ParamField path="push_index" type="tuple (row, col)" required>
+  Insertion point as `(x, y)`.
+</ParamField>
+
+<ParamField path="push_value" type="int" required>
+  Number of rows to shift downward. Must be > 0.
+</ParamField>
+
+### Returns
+
+<ResponseField name="array" type="numpy.ndarray">Modified array.</ResponseField>
+
+---
+
+## `value_pusher2D`
+
+```python
+rules.value_pusher2D(array, new_value, row_index, push_amount)
+```
+
+Vectorised version of `value_pusher` that displaces all columns simultaneously. For each column `j`, values at rows `row_index[j]` and below are shifted down by `push_amount[j]` rows, and the vacated rows are filled with `new_value`. Used internally by `sill3D_pushy_emplacement` and `emplace_sills`.
+
+### Parameters
+
+<ParamField path="array" type="numpy.ndarray (shape=(a, b))" required>
+  Target array.
+</ParamField>
+
+<ParamField path="new_value" type="float | int | str" required>
+  Value to fill in the displaced space (e.g. magma temperature or rock type).
+</ParamField>
+
+<ParamField path="row_index" type="numpy.ndarray (length=b)" required>
+  Per-column start row for the shift.
+</ParamField>
+
+<ParamField path="push_amount" type="numpy.ndarray (length=b)" required>
+  Per-column number of rows to shift.
+</ParamField>
+
+### Returns
+
+<ResponseField name="array" type="numpy.ndarray (shape=(a, b))">
+  Updated array.
+</ResponseField>
+
+---
+
+## `prop_updater`
+
+```python
+rules.prop_updater(lithology, prop_dict, property)
+```
+
+Rebuilds a physical-property array from a lithology map and a property dictionary after mesh manipulation. Use this after any `value_pusher` call to resynchronise density, porosity, TOC, or specific heat with the shifted lithology.
+
+### Parameters
+
+<ParamField path="lithology" type="numpy.ndarray (shape=(a, b))" required>
+  Current lithology map (strings).
+</ParamField>
+
+<ParamField path="prop_dict" type="dict" required>
+  Dictionary of the form `{rock_name: {property_name: value, ...}, ...}`.
+</ParamField>
+
+<ParamField path="property" type="str" required>
+  Property key to extract, e.g. `'Density'`, `'Porosity'`, `'TOC'`, `'Specific Heat'`.
+</ParamField>
+
+### Returns
+
+<ResponseField name="prop" type="numpy.ndarray (shape=(a, b))">
+  Property field with values looked up per rock type.
+</ResponseField>
+
+### Example
+
+```python
+from TuLIP import rules
+density = rules.prop_updater(lithology, sc.rock_prop_dict, 'Density')
+```
+
+---
+
+## Stochastic samplers
+
+These static methods are called by `sill_controls.build_sillcube` to sample sill geometries and positions from statistical distributions. You can also call them directly when building custom emplacement scenarios.
+
+| Method | Distribution | Sampled quantity |
+|---|---|---|
+| `randn_heights(n_sills, l_sill, h_sill, sd, dy)` | Normal (clipped) | Emplacement depth (row indices) |
+| `uniform_heights(n_sills, l_sill, h_sill, dy)` | Uniform | Emplacement depth (row indices) |
+| `x_spacings(n_sills, x_min, x_max, sd, dx)` | Normal (clipped) | Lateral position (column indices) |
+| `uniform_x(n_sills, x_min, x_max, dx)` | Uniform | Lateral position (column indices) |
+| `empirical_CDF(n_sills, xarray, cdf)` | Empirical CDF | Any quantity |
+| `randn_dims(min_min, min_max, sd_min, mar, sar, n_sills)` | Normal | Width (m) and thickness (m) |
+| `uniform_dims(min_min, min_max, min_ar, max_ar, n_sills)` | Uniform | Width and thickness |
+
+`randn_heights` and `x_spacings` recursively resample out-of-bound values until all samples fall within `[h_sill, l_sill]` and `[x_min, x_max]` respectively. `empirical_CDF` inverts a user-supplied CDF using uniformly drawn random numbers.
+
+### Example: sampling depths
+
+```python
+from TuLIP import rules
+
+r = rules()
+depths = r.randn_heights(
+    n_sills=500,
+    l_sill=4000,   # deepest (m)
+    h_sill=500,    # shallowest (m)
+    sd=5000,
+    dy=50
+)
+print(depths[:5])  # row indices
+```
+
+---
+
+## `check_closest_sill_temp`
+
+```python
+sill_controls.check_closest_sill_temp(
+    T_field, sills_array, curr_sill,
+    dx, time, T_solidus,
+    no_sill='', calculate_all=False, save_file=None
+)
+```
+
+Analyses the spatial proximity between active (hot) intrusions using a KDTree search. For each queried sill, it finds the nearest other sill whose temperature exceeds `T_solidus`, records the edge-to-edge distance (metres), nearest-point indices, and current dimensions. Results are returned as a pandas DataFrame.
+
+This method is defined on `sill_controls` but operates on output from `rules`-based emplacement; it is documented here because it is the primary tool for diagnosing sill thermal interaction.
+
+### Parameters
+
+<ParamField path="T_field" type="numpy.ndarray (shape=(a, b))" required>
+  Current temperature field (°C).
+</ParamField>
+
+<ParamField path="sills_array" type="numpy.ndarray (shape=(a, b))" required>
+  Integer (or string) sill-ID field. Nodes not belonging to any sill should equal `no_sill`.
+</ParamField>
+
+<ParamField path="curr_sill" type="int" required>
+  ID of the sill to analyse (used when `calculate_all=False`).
+</ParamField>
+
+<ParamField path="dx" type="float" required>
+  Grid spacing (m), used to convert node distances to metres.
+</ParamField>
+
+<ParamField path="time" type="float" required>
+  Current simulation time (years), stored in the output DataFrame.
+</ParamField>
+
+<ParamField path="T_solidus" type="float" required>
+  Solidus temperature threshold (°C). Only sills hotter than this are considered active.
+</ParamField>
+
+<ParamField path="no_sill" type="str | int" default="''">
+  Sentinel value for grid cells that belong to no sill.
+</ParamField>
+
+<ParamField path="calculate_all" type="bool" default="False">
+  When `True`, computes proximity for every unique sill ID in `sills_array` using a global KDTree. When `False`, analyses only `curr_sill`.
+</ParamField>
+
+<ParamField path="save_file" type="str | None" default="None">
+  If provided, saves the results to `save_file + '.csv'` (used only when `calculate_all=True`).
+</ParamField>
+
+### Returns
+
+<ResponseField name="sills_data" type="pandas.DataFrame">
+  One row per queried sill with columns: `sills`, `closest_sill`, `distance` (m), `index of closest sill`, `temperature`, `width of current sill` (m), `thickness of current sill` (m), `current time`, and equivalent columns for the closest sill.
+</ResponseField>

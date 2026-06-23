@@ -1,0 +1,113 @@
+---
+title: "Choose and configure a heat-transfer solver"
+sidebarTitle: "Solvers"
+description: "Compare TuLIP's five heat-transfer solvers and choose the right balance of numerical accuracy, stability, and runtime for your run."
+---
+
+TuLIP provides five heat-transfer solvers that cover a range of accuracy and speed tradeoffs. At one end, explicit convolution solvers are fast but require a small time step to stay stable. At the other end, fully implicit matrix solvers are unconditionally stable and allow large time steps, at the cost of factorising and solving a sparse linear system each iteration. Choosing the right solver for your workload is one of the most consequential configuration decisions you will make.
+
+## Solver comparison
+
+The solver is selected by passing a string to the `cool_method` argument of `emplace_sills()` and, during initialisation, to `diff_solve()`.
+
+| Solver string | Method | Stability | Speed | Recommended use |
+|--------------|--------|-----------|-------|-----------------|
+| `'conv smooth'` | Explicit convolution, smoothed diffusivity | Conditionally stable | Fastest | Quick tests and parameter sweeps |
+| `'conv chain'` | Explicit convolution, chain rule | Conditionally stable | Fast | Alternative when conductivity gradients are steep |
+| `'adi'` | ADI (Alternating Direction Implicit), smoothed | Unconditionally stable | Moderate | **Recommended for production runs** |
+| `'smooth'` | Fully implicit matrix, smoothed diffusivity | Unconditionally stable | Slower | High-accuracy runs; requires pypardiso for best speed |
+| `'chain'` | Fully implicit matrix, chain rule | Unconditionally stable | Slower | High-accuracy runs with strong conductivity gradients |
+
+## Passing the solver
+
+You pass the solver string as `cool_method` in two places: once to `get_silli_initial_thermogenic_state()` (or `get_sillburp_initial_thermogenic_state()`) to set the solver used during thermal pre-conditioning, and once to `emplace_sills()` to set the solver used during the intrusion phase.
+
+```python
+import numpy as np
+from TuLIP import sill_controls
+
+sc = sill_controls(x=300000, y=12000, dx=50, dy=50)
+
+# --- initialise properties array (abbreviated) ---
+# props_array[0] = T_field, props_array[1] = rock, etc.
+
+# Pre-condition: run background thermal maturation with ADI solver
+current_time, tot_RCO2, props_array, *silli_state = sc.get_silli_initial_thermogenic_state(
+    props_array=props_array,
+    dt=3.15e9,           # 100-year time steps in seconds
+    method='adi',        # <-- solver choice
+    time=3.15e13         # 1 Ma pre-conditioning in seconds
+)
+
+# Package carbon model params
+carbon_model_params = (tot_RCO2, props_array, *silli_state)
+
+# Intrusion phase: pass the same solver to emplace_sills
+props_total_array, carbon_model_params = sc.emplace_sills(
+    props_array=props_array,
+    n_sills=200,
+    cool_method='adi',   # <-- solver choice
+    time_steps=time_steps,
+    current_time=current_time,
+    sillsquare=sillsquare,
+    carbon_model_params=carbon_model_params,
+    empl_times=empl_times,
+    volume_params=volume_params,
+    z_index=0,
+    model='silli'
+)
+```
+
+## pypardiso vs scipy fallback
+
+The fully implicit solvers (`'smooth'` and `'chain'`) build and solve a sparse linear system at every time step using the `straight_solver()` method.
+
+<Note>
+  `straight_solver()` calls `pypardiso.spsolve()` by default. PyPardiso is a Python wrapper around the Intel MKL PARDISO parallel sparse direct solver, which is significantly faster than the SciPy equivalent on multi-core machines. If pypardiso is not installed (or fails to import), TuLIP will fall back to `scipy.sparse.linalg.spsolve()` transparently, but you will see a noticeable slowdown on large grids. Install pypardiso with `pip install pypardiso` to get the full performance benefit.
+</Note>
+
+## Time step and CFL stability
+
+The two explicit solvers (`'conv smooth'` and `'conv chain'`) are conditionally stable: the time step `dt` must satisfy the Courant–Friedrichs–Lewy (CFL) condition to prevent numerical blow-up.
+
+For a 2D diffusion problem with isotropic grid spacing the stability criterion is:
+
+$$
+dt \leq \frac{dx^2}{2\alpha}
+$$
+
+where $\alpha$ is the maximum thermal diffusivity (m²/s) in the domain. TuLIP warns you at runtime if your chosen `dt` violates this bound and automatically reduces `dt` to a safe value when running `get_silli_initial_thermogenic_state()`.
+
+```python
+# Estimate a safe dt for explicit solvers
+alpha_max = 1e-6   # m²/s — typical upper bound for crustal rock
+dx = 50            # metres
+
+dt_max = dx**2 / (2 * alpha_max)
+print(f"Maximum stable dt: {dt_max:.1f} s  ({dt_max/3.15e7:.2f} yr)")
+# Maximum stable dt: 1250000.0 s  (0.04 yr)
+```
+
+For basin-scale simulations with fine grids, this constraint means millions of explicit time steps per million years of simulation time. Switching to `'adi'`, `'smooth'`, or `'chain'` removes this restriction entirely and lets you use geologically meaningful time steps (thousands to millions of years).
+
+## Latent and radiogenic heat
+
+<ParamField path="include_external_heat" type="bool" default="True">
+  When `True`, TuLIP explicitly calculates two additional heat source terms at every time step and adds them to the right-hand side of the diffusion equation. Set to `False` to run a pure conduction model with no internal heat generation.
+</ParamField>
+
+<Accordion title="What each source term contributes physically">
+
+**Latent heat of crystallisation**
+
+When magma cools through the liquidus–solidus interval (`T_liquidus` → `T_solidus`), it releases the latent heat of crystallisation. TuLIP calls `cool.get_latH()` to compute this term from the melt fraction curve. For basalt the latent heat is approximately 4 × 10⁵ J/kg. Neglecting it causes the model to underestimate the time a sill stays hot and therefore underestimate the thermogenic carbon yield of each intrusion.
+
+**Radiogenic heat production**
+
+The crust produces heat continuously through the radioactive decay of ²³⁸U, ²³⁵U, ²³²Th, and ⁴⁰K. TuLIP calls `cool.get_radH()` to compute a depth- and density-dependent radiogenic heat source. This term matters most for long simulations (>1 Ma) and for deep crustal sections where it contributes a non-trivial fraction of the steady-state geotherm.
+
+**Organic latent heat**
+
+When `model='silli'` or `model='sillburp'` is active, a third term — the latent heat of organic breakdown — is added via `cool.get_org_latH()`. This term captures the endothermic pyrolysis energy that slightly suppresses temperature in contact aureoles. It is automatically included when a carbon model is selected; it is not controlled by `include_external_heat`.
+
+</Accordion>

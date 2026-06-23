@@ -1,0 +1,89 @@
+---
+title: "Stochastic sill emplacement and sill geometry in TuLIP"
+sidebarTitle: "Sill Emplacement"
+description: "Understand how TuLIP pre-computes a stochastic sill catalogue with build_sillcube() and injects intrusions into the 2D crustal model."
+---
+
+In TuLIP, sill emplacement is the process by which packets of basaltic magma are injected as thin horizontal sheets into the model domain at randomly sampled depths, lateral positions, and times. Rather than deciding where each sill goes during the simulation, TuLIP pre-computes the entire intrusion sequence before time-stepping begins, giving you a reproducible catalogue that you can inspect, archive, and replay under different thermal conditions.
+
+## What a sill is
+
+A sill is a tabular igneous intrusion that forms when magma forces its way between existing rock layers and spreads laterally rather than punching upward. In Large Igneous Provinces, thousands of sills can stack up through a sedimentary basin over hundreds of thousands to millions of years, collectively injecting enough heat to bake organic-rich rocks and drive enormous pulses of thermogenic CO₂ into the atmosphere. TuLIP models each sill as either an elliptical or rectangular body characterised by a half-width and a thickness, emplaced at a specific depth and lateral position in the 2D cross-section.
+
+## The sill cube
+
+`build_sillcube()` pre-computes the complete intrusion catalogue for a simulation run. It samples random distributions for sill geometry and position, assembles emplacement timing from the specified magma flux, and calls `rules.sill_3Dcube()` to pack everything into a 3D NumPy array (the *sill cube*). Each entry in the sill cube encodes a sill's rock type, geometry, and emplacement time, indexed by along-strike position, lateral position, and sill number.
+
+### Key parameters
+
+| Parameter | Format | Meaning |
+|---|---|---|
+| `thickness_range` | `[min, max, std]` in metres | Controls the thickness distribution of individual sills. |
+| `aspect_ratio` | `[mean, std]` | Mean and standard deviation of the width-to-thickness ratio; drives lateral extent. |
+| `depth_range` | `[min, max, std]` in metres | Depth window (below the surface) in which sills are randomly placed. |
+| `z_range` | `[min, max, std]` in metres | Along-strike spatial range from which each sill's z-coordinate is drawn. |
+| `lat_range` | `[min, max, std]` in metres | Lateral (x) range from which each sill's horizontal centre is drawn. |
+| `phase_times` | `[thermal_mat_time, cooling_time]` in seconds | Pre-emplacement maturation duration and post-emplacement cooling duration; used to offset emplacement start. |
+| `flux` | m³/s | Magma supply rate controlling how quickly emplacement times are assigned. |
+| `tot_volume` | m³ | Target cumulative intrusive volume; emplacement stops once this threshold is reached. |
+| `n_sills` | int | Initial estimate of the total number of sills (used for array pre-allocation; the actual count may differ). |
+
+<Note>
+`build_sillcube()` automatically generates diagnostic plots of the depth distribution, width/thickness distributions, and cumulative volume vs. time in your `plots/` directory. Review these before running the full simulation to confirm the intrusion population looks geologically reasonable.
+</Note>
+
+### Distribution functions
+
+By default, depths (`depth_function`) and lateral positions (`lat_function`) are drawn from truncated normal distributions via `rules.randn_heights()` and `rules.x_spacings()`. You can switch to uniform sampling by passing `depth_function='uniform'` or `lat_function='uniform'`, or supply any callable that returns an array of node indices. Sill dimensions follow the same pattern, controlled by `dims_function`.
+
+## Geometry shapes
+
+TuLIP supports two sill shapes, selected via the `shape` argument:
+
+- **`'elli'` (default)** — Each sill is modelled as an oblate ellipsoid whose volume is `(4π/3) × (width/2)² × (thickness/2)`. This shape is more physically realistic for most intrusions.
+- **`'rect'`** — Each sill is a rectangular block with volume `width × width × thickness`. Useful when you want simple, predictable geometries.
+
+You can also attach vertical dike tails to each sill by setting `emplace_dike=True`. Dike tails connect intrusions to the magma source and slightly increase the heated rock volume.
+
+## Stratigraphic displacement
+
+When a sill intrudes between existing rock layers, it physically pushes the overlying strata upward — a process TuLIP replicates with `rules.value_pusher2D()`. Every column of the `props_array` (temperature, lithology, porosity, density, TOC, specific heat) above the injection depth is shifted downward by the sill thickness in grid nodes, and the sill cells are filled with magma properties. This means the model correctly tracks the burial of organic matter that was already maturing above the intrusion.
+
+<Warning>
+If your sill catalogue contains very thick intrusions near the surface, the upward push can move rock nodes past the model boundary. Set `depth_range[0]` (minimum emplacement depth) to at least a few sill thicknesses below the surface to avoid this.
+</Warning>
+
+## Example
+
+```python
+from TuLIP import sill_controls
+
+sc = sill_controls(
+    x=300_000, y=12_000, dx=50, dy=50,
+    T_liquidus=1200, T_solidus=800,
+    sill_cube_dir="my_run/",
+)
+
+sillcube, n_sills, params = sc.build_sillcube(
+    z=100_000,                         # along-strike extent, m
+    dt=3.156e9,                        # time step ≈ 100 yr in seconds
+    thickness_range=[50, 400, 100],    # min, max, std thickness in m
+    aspect_ratio=[100, 20],            # mean and std width:thickness ratio
+    depth_range=[500, 8000, 2000],     # min, max, std depth in m
+    z_range=[0, 100_000, 30_000],      # along-strike range in m
+    lat_range=[0, 300_000, 80_000],    # lateral range in m
+    phase_times=[3.156e13, 3.156e12],  # ~1 Myr maturation, ~100 kyr cooling
+    flux=0.1,                          # m³/s magma flux
+    tot_volume=1e12,                   # 1000 km³ total intrusive volume
+    n_sills=500,                       # initial sill count estimate
+    shape="elli",                      # elliptical sill geometry
+)
+
+print(f"Emplaced {n_sills} sills totalling ~1000 km³")
+```
+
+The returned `params` array has shape `(5, n_sills)` and stores emplacement times, depths, lateral centres, widths, and thicknesses for every sill — useful for post-processing and plotting.
+
+<Tip>
+Save `sillcube` and `params` to disk with `np.save()` immediately after calling `build_sillcube()`. This lets you reconstruct exactly the same intrusion sequence without rerunning the stochastic generation step.
+</Tip>

@@ -1,0 +1,231 @@
+---
+title: "Run a TuLIP thermal simulation end-to-end"
+sidebarTitle: "Run Simulation"
+description: "Build a properties array, compute the pre-emplacement thermal state, call emplace_sills(), and read CO₂ and temperature outputs from a TuLIP run."
+---
+
+A TuLIP simulation has three distinct phases: a **thermal maturation phase** where the crust reaches geothermal equilibrium and baseline organic matter converts to CO₂ before any magma arrives; an **emplacement phase** where sills intrude one by one and the heat diffusion solver steps forward; and a **post-emplacement cooling phase** where the crust cools back toward steady state. This guide walks through the complete workflow, from assembling the initial properties array to reading output carbon emissions.
+
+<Steps>
+
+### Set up the initial properties array
+
+TuLIP represents the crustal section as a 3D NumPy object array — `props_array` — with shape `(n_properties, n_rows, n_cols)`. The six property layers are indexed through `sc.prop_dict`:
+
+| Index | Property | Dtype |
+|-------|----------|-------|
+| 0 (`sc.Temp_index`) | Temperature field (°C) | `float` |
+| 1 (`sc.rock_index`) | Lithology string codes | `object` (str) |
+| 2 (`sc.poros_index`) | Porosity (fraction) | `float` |
+| 3 (`sc.dense_index`) | Density (kg/m³) | `float` |
+| 4 (`sc.TOC_index`) | Total organic carbon (wt %) | `float` |
+| 5 (`sc.sph_index`) | Specific heat (J/kg·K) | `float` |
+
+Build a two-layer domain — shale over basalt — and initialise a geothermal gradient:
+
+```python props_setup.py
+import numpy as np
+from TuLIP import sill_controls
+
+# --- Domain ---
+x, y, dx, dy = 300000, 12000, 50, 50
+sc = sill_controls(x=x, y=y, dx=dx, dy=dy,
+                   T_liquidus=1175, T_solidus=800,
+                   include_external_heat=True)
+
+a = int(y // dy)   # rows  (depth)
+b = int(x // dx)   # columns (lateral)
+
+# --- Temperature field: linear geothermal gradient ---
+T_field = np.zeros((a, b))
+T_field[-1, :] = 1000.0   # basal temperature (°C)
+k = np.ones((a, b)) * 31.536  # thermal diffusivity (m²/yr)
+T_field = sc.cool.heat_flux(k, a, b, dx, dy, T_field, 'straight')
+
+# --- Lithology: shale over basalt ---
+rock = np.empty((a, b), dtype=object)
+rock[:] = 'basalt'
+rock[0:int(4000 / dy), :] = 'shale'   # top 4 km is shale
+
+# --- Scalar properties from rock_prop_dict ---
+porosity = np.zeros((a, b))
+density  = np.zeros((a, b))
+TOC      = np.zeros((a, b))
+sph      = np.zeros((a, b))
+
+for i in range(a):
+    for j in range(b):
+        rtype = rock[i, j]
+        porosity[i, j] = sc.rock_prop_dict[rtype]['Porosity']
+        density[i, j]  = sc.rock_prop_dict[rtype]['Density']
+        TOC[i, j]      = sc.rock_prop_dict[rtype]['TOC']
+        sph[i, j]      = sc.rock_prop_dict[rtype]['Specific Heat']
+
+# --- Assemble the 6-layer props_array ---
+props_array = np.empty((len(sc.prop_dict), a, b), dtype=object)
+props_array[sc.Temp_index]  = T_field
+props_array[sc.rock_index]  = rock
+props_array[sc.poros_index] = porosity
+props_array[sc.dense_index] = density
+props_array[sc.TOC_index]   = TOC
+props_array[sc.sph_index]   = sph
+```
+
+### Compute the initial thermal maturation state
+
+Before any sill is emplaced, run the crust forward through the `thermal_mat_time` period at geothermal temperatures. This establishes the baseline vitrinite reflectance and TOC depletion that organic-rich rocks experience simply from burial.
+
+Call `get_silli_initial_thermogenic_state()` with your assembled `props_array`, the time step, the solver method, and the total maturation duration:
+
+```python initial_state.py
+thermal_mat_time = int(3e6)  # years
+dt = round((min(dx, dy) ** 2) / (5 * 31.536), 3)
+
+(current_time,
+ tot_RCO2,
+ props_array,
+ RCO2_silli,
+ Rom_silli,
+ percRo_silli,
+ curr_TOC_silli,
+ W_silli,
+ T_field) = sc.get_silli_initial_thermogenic_state(
+    props_array,
+    dt,
+    method='conv smooth',   # ADI-preconditioned convolution solver
+    time=thermal_mat_time,  # run for exactly this many years
+)
+
+print(f"Maturation complete. Current time: {current_time:.3e} yr")
+print(f"Background CO₂ steps logged: {len(tot_RCO2)}")
+```
+
+The returned variables carry the cumulative maturation state forward into the emplacement phase:
+
+| Return value | Description |
+|---|---|
+| `current_time` | Simulation clock at end of maturation (years) |
+| `tot_RCO2` | List of per-timestep CO₂ emission rates (kg/yr) during maturation |
+| `props_array` | Updated properties array (TOC depleted, T redistributed) |
+| `RCO2_silli` | 2D array of instantaneous CO₂ emission rate (kg/m³/yr) |
+| `Rom_silli` | 2D array of rate of organic matter conversion |
+| `percRo_silli` | 2D array of vitrinite reflectance (%Ro) |
+| `curr_TOC_silli` | 2D array of remaining TOC (wt %) |
+| `W_silli` | Internal SILLi reaction-progress state array |
+
+### Run `emplace_sills()`
+
+Pack the outputs of the maturation step into the `carbon_model_params` list, build the time-step array from `current_time` through the end of cooling, and call `emplace_sills()`:
+
+```python emplace.py
+import numpy as np
+
+tot_volume = int(0.5e6 * 1e9)   # m³
+flux       = int(3e9)           # m³/yr
+cooling_time = int(3e4)         # years of post-emplacement cooling
+
+# Load the sill cube and emplacement parameters saved earlier
+import pandas as pd
+load_dir      = f"sillcubes/{flux:.3e}"
+volumes       = float(pd.read_csv(f"{load_dir}/n_sills.csv")['volumes'][0])
+n_sills       = int(pd.read_csv(f"{load_dir}/n_sills.csv")['n_sills'][0])
+sillcube      = np.load(f"{load_dir}/sillcube{volumes}.npy", allow_pickle=True)
+empl_params   = pd.read_csv(f"{load_dir}/emplacement_params{volumes}.csv")
+empl_times    = np.array(empl_params['empl_times'])
+
+# Extract the 2D cross-section at z_index (column slice through the 3D cube)
+z_index    = 300   # which along-strike slice to simulate
+sillsquare = sillcube[z_index]
+
+# Build time array covering current_time → last emplacement + cooling
+end_time   = empl_times[-1] + cooling_time + dt
+time_steps = np.arange(current_time, end_time, dt)
+
+# Volume and flux bookkeeping for save-directory naming
+volume_params = [flux, volumes]
+
+# Initial carbon state from the maturation step
+carbon_model_params = [
+    tot_RCO2,         # existing emissions list (will be extended in-place)
+    props_array,      # unused placeholder (kept for API compatibility)
+    RCO2_silli,
+    Rom_silli,
+    percRo_silli,
+    curr_TOC_silli,
+    W_silli,
+]
+
+carbon_model_params = sc.emplace_sills(
+    props_array        = props_array,
+    n_sills            = n_sills,
+    cool_method        = 'conv smooth',  # heat-diffusion solver method
+    time_steps         = time_steps,
+    current_time       = round(current_time, 3),
+    sillsquare         = sillsquare,
+    carbon_model_params= carbon_model_params,
+    empl_times         = empl_times,
+    volume_params      = volume_params,
+    z_index            = z_index,
+    saving_factor      = [100],          # write a VTK snapshot every 100 steps
+    save_dir           = f"output/{flux:.3e}/{volumes:.3e}/{z_index}",
+    model              = 'silli',        # use the SILLi thermogenic model
+    dt                 = dt,
+    q                  = None,           # optional bottom heat flux (W/m²)
+)
+```
+
+`z_index` selects which 2D cross-section through the 3D sill cube to run. Each parallel worker typically takes a different `z_index`, allowing many independent 2D slices of the same 3D cube to run simultaneously.
+
+### Access results
+
+Unpack `carbon_model_params` to retrieve all outputs:
+
+```python results.py
+(tot_RCO2,
+ tot_melt10,
+ tot_melt50,
+ tot_solidus,
+ area_sills,
+ _props,
+ RCO2_silli,
+ Rom_silli,
+ percRo_silli,
+ curr_TOC_silli,
+ W_silli) = carbon_model_params
+
+import matplotlib.pyplot as plt
+
+# Time-series of CO₂ emission rates
+plt.figure()
+plt.plot(time_steps[1:], np.log10(np.array(tot_RCO2) + 1e-30))
+plt.xlabel("Time (years)")
+plt.ylabel("log₁₀ CO₂ emission rate (kg/yr)")
+plt.title("Thermogenic CO₂ over time")
+plt.tight_layout()
+plt.savefig("output/co2_emissions.png")
+plt.close()
+```
+
+</Steps>
+
+## Simulation output reference
+
+| Variable | Shape | Description |
+|---|---|---|
+| `tot_RCO2` | `(n_time_steps,)` | Per-timestep total thermogenic CO₂ emission rate (kg/yr) |
+| `tot_melt10` | `(n_time_steps,)` | Volume of crust with melt fraction ≤ 0.1 (m³) |
+| `tot_melt50` | `(n_time_steps,)` | Volume of crust with melt fraction ≤ 0.5 (m³) |
+| `tot_solidus` | `(n_time_steps,)` | Area above solidus temperature at each time step (m²) |
+| `area_sills` | `(n_time_steps,)` | Total footprint area of emplaced sills (m²) |
+| `RCO2_silli` | `(a, b)` | Instantaneous CO₂ emission rate field at simulation end (kg/m³/yr) |
+| `Rom_silli` | `(a, b)` | Rate of organic matter conversion at simulation end |
+| `percRo_silli` | `(a, b)` | Vitrinite reflectance map (%Ro) at simulation end |
+| `curr_TOC_silli` | `(a, b)` | Remaining TOC field (wt %) at simulation end |
+
+<Note>
+TuLIP writes a VTK snapshot file (`Properties_<step>.vtk`) to `save_dir` every `saving_factor` time steps. Each file contains point-data fields for Temperature, Lithology, Density, Porosity, TOC, Specific Heat, Rate of CO₂, Rate of organic matter, and Vitrinite reflectance. See the [VTK Visualization](/guides/vtk-visualization) guide for how to open these in ParaView.
+</Note>
+
+<Warning>
+TuLIP uses Numba JIT compilation internally for several thermal-physics kernels. The **first call** to `emplace_sills()` (or `get_silli_initial_thermogenic_state()`) in a fresh Python process will trigger Numba ahead-of-time compilation, which can take 30–120 seconds depending on your hardware. Subsequent calls in the same process, and all calls in warmed-up worker processes, run at full native speed.
+</Warning>

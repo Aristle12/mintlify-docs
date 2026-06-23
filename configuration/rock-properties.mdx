@@ -1,0 +1,174 @@
+---
+title: "Customize rock properties in TuLIP"
+sidebarTitle: "Rock Properties"
+description: "Use TuLIP's six built-in rock types or supply custom property dictionaries for density, porosity, TOC, conductivity, and specific heat."
+---
+
+TuLIP ships with physical properties for six common crustal rock types — shale, sandstone, limestone, granite, basalt, and peridotite — so you can start a simulation without looking up a single lab value. When you need to match measured data from a specific basin or formation, you can override any or all of these properties by passing custom dictionaries to `sill_controls`. The same pattern applies to the magma itself and to the functions that compute thermal conductivity and specific heat.
+
+## Built-in rock types
+
+When you do not supply a `rock_prop_dict`, TuLIP initialises the following property table internally:
+
+| Rock type | Density (kg/m³) | Porosity (fraction) | TOC (wt %) | Specific Heat (J/kg/K) |
+|-----------|----------------|---------------------|-----------|------------------------|
+| `shale` | 2500 | 0.10 | 2.0 | 820 |
+| `sandstone` | 2600 | 0.20 | 2.5 | 800 |
+| `limestone` | 2600 | 0.20 | 2.5 | 800 |
+| `granite` | 2700 | 0.05 | 0.0 | 800 |
+| `basalt` | 2850 | 0.00 | 0.0 | 850 |
+| `peridotite` | 3100 | 0.05 | 0.0 | 1200 |
+
+These values are the defaults hard-coded in `sill_controls.__init__`. TOC values for igneous rocks are zero because they contain no thermally mature organic carbon.
+
+## rock_prop_dict
+
+The `rock_prop_dict` parameter maps rock-type name strings to a dictionary of physical properties. Each entry must contain at minimum `'Density'`, `'Porosity'`, `'TOC'`, and `'Specific Heat'`. TuLIP also uses `'Latent Heat Org'` internally to account for the heat released when organic matter breaks down.
+
+```python
+custom_rock_props = {
+    "shale": {
+        "Density": 2450,          # kg/m³
+        "Porosity": 0.12,         # fraction (0–1)
+        "TOC": 3.5,               # wt %
+        "Specific Heat": 830,     # J/kg/K
+        "Latent Heat Org": -3.76e5  # J/kg (negative = endothermic breakdown)
+    }
+}
+```
+
+You only need to include the rock types that actually appear in your lithology array. TuLIP raises a `ValueError` if it encounters a lithology string in the grid that has no matching entry in the property dictionary.
+
+## Overriding properties
+
+Pass your custom dictionary as the `rock_prop_dict` keyword argument when you instantiate `sill_controls`:
+
+```python
+from TuLIP import sill_controls
+
+custom_rock_props = {
+    "shale": {
+        "Density": 2450,
+        "Porosity": 0.12,
+        "TOC": 3.5,
+        "Specific Heat": 830,
+        "Latent Heat Org": -3.76e5
+    },
+    "sandstone": {
+        "Density": 2550,
+        "Porosity": 0.18,
+        "TOC": 1.0,
+        "Specific Heat": 810,
+        "Latent Heat Org": -3.76e5
+    },
+    "granite": {
+        "Density": 2680,
+        "Porosity": 0.03,
+        "TOC": 0.0,
+        "Specific Heat": 790,
+        "Latent Heat Org": 0
+    }
+}
+
+sc = sill_controls(
+    x=300000,
+    y=12000,
+    dx=50,
+    dy=50,
+    rock_prop_dict=custom_rock_props
+)
+```
+
+Any rock type not present in your dictionary will be unavailable to the simulation. If your lithology array contains only a subset of the six default types, you only need to populate that subset.
+
+## Magma properties
+
+The `magma_prop_dict` parameter controls the physical properties of the intruded basalt melt. The default values are:
+
+```python
+default_magma_props = {
+    "Temperature": 1100,       # °C — emplacement temperature
+    "Lithology":  "basalt_melt",
+    "Porosity":    0,
+    "Density":     2850,       # kg/m³
+    "Specific Heat": 850,      # J/kg/K
+    "Latent Heat":   4e5,      # J/kg — crystallisation latent heat
+    "TOC":           0,
+    "Latent Heat Org": 0
+}
+```
+
+The two most commonly adjusted fields are `T_liquidus` and `T_solidus`, which are set as top-level `sill_controls` arguments rather than inside `magma_prop_dict`:
+
+<ParamField path="T_liquidus" type="float" default="1250">
+  Magma liquidus temperature in °C. Cells above this temperature are treated as fully molten; latent heat is released as temperature drops through the crystallisation interval.
+</ParamField>
+
+<ParamField path="T_solidus" type="float" default="800">
+  Magma solidus temperature in °C. Below this temperature the intrusion is fully crystallised and conducts heat like a solid basalt.
+</ParamField>
+
+To pass a fully custom magma dictionary:
+
+```python
+sc = sill_controls(
+    x=300000,
+    y=12000,
+    dx=50,
+    dy=50,
+    T_liquidus=1200,
+    T_solidus=850,
+    magma_prop_dict={
+        "Temperature": 1150,
+        "Lithology": "basalt_melt",
+        "Porosity": 0,
+        "Density": 2900,
+        "Specific Heat": 870,
+        "Latent Heat": 3.8e5,
+        "TOC": 0,
+        "Latent Heat Org": 0
+    }
+)
+```
+
+## Thermal conductivity options
+
+TuLIP offers three ways to supply thermal conductivity to the solver.
+
+<ParamField path="k_const" type="bool" default="True">
+  When `True`, every grid cell uses the same constant conductivity value given by `kc_val`. This is the fastest option and is sufficient for most applications where you do not expect large spatial variations in conductivity.
+</ParamField>
+
+<ParamField path="kc_val" type="float" default="7.884e7">
+  The constant thermal diffusivity value (conductivity / density / heat capacity, in m²/s scaled units) used when `k_const=True`. The default is calibrated to typical crustal rock.
+</ParamField>
+
+<ParamField path="k_func" type="callable" default="None">
+  A custom function with signature `f(T_field, rock, density, dy)` that returns a 2D array of thermal conductivity values. When provided, this function overrides both `k_const` and `kc_val`. Use this for fully custom temperature- and lithology-dependent conductivity laws.
+</ParamField>
+
+Setting `k_const=False` without supplying `k_func` tells TuLIP to fall back to its built-in `get_conductivity()` method, which computes conductivity as:
+
+```python
+conductivity = 1 / (0.24094 + 4.6019e-4 * (T_field + 273.15))
+```
+
+This is a temperature-dependent inverse relationship appropriate for typical crustal rocks.
+
+## Specific heat options
+
+Specific heat follows the same three-tier pattern as thermal conductivity.
+
+<ParamField path="cp_const" type="bool" default="True">
+  When `True`, specific heat is looked up from the `rock_prop_dict` for each lithology. This is fast and appropriate for most runs.
+</ParamField>
+
+<ParamField path="cp_func" type="callable" default="None">
+  A custom function with signature `f(T_field, rock, density, dy)` that returns a 2D array of specific heat values. Supplying this overrides the table-lookup behaviour.
+</ParamField>
+
+Setting `cp_const=False` without a `cp_func` activates TuLIP's built-in `get_specific_heat()` method, which uses polynomial fits to temperature for igneous and sedimentary rock groups.
+
+<Tip>
+  Start with the built-in property table and `k_const=True`. Only override `rock_prop_dict` when you have measured lab values from your study area, and only switch to temperature-dependent conductivity (`k_const=False`) if your temperature range exceeds a few hundred degrees and you need accurate heat-flux magnitudes. Premature customisation is a common source of bugs.
+</Tip>

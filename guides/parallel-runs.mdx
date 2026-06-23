@@ -1,0 +1,168 @@
+---
+title: "Run TuLIP simulations in parallel across parameters"
+sidebarTitle: "Parallel Runs"
+description: "Use joblib and TuLIP's utilities module to sweep flux and volume parameter spaces by running independent 2D slice simulations across multiple CPU cores."
+---
+
+A single TuLIP sill cube contains many 2D cross-sectional slices — each one a valid, independent simulation. The natural way to exploit this is to assign each slice to a separate CPU core and run them all simultaneously. TuLIP's `utilities` module ships two drop-in functions, `cooler()` and `sillburp_cooler()`, designed specifically to be used with joblib's `Parallel`/`delayed` pattern. Each function loads a pre-built sill cube slice, runs the full emplacement-plus-cooling physics, and writes its own output directory — no shared state between workers.
+
+## How it works
+
+`utilities.cooler()` is a self-contained simulation runner. When you call it, it:
+
+1. Reads the initial properties array and maturation state from pre-saved VTK files in `file_path_dir`.
+2. Loads the correct 2D sill slice for the given `flux`, `iter`, and `z_index`.
+3. Calls `sc.emplace_sills()` with the SILLi carbon model.
+4. Writes a `times.csv` containing `time_steps`, `tot_RCO2`, melt fractions, and sill area to a per-run output directory.
+
+`utilities.sillburp_cooler()` is the counterpart for the Sillburp multi-kinetics emissions model. It reads `initial_sillburp_state_*.vtk` files and loads additional reaction-progress arrays (`progress_of_reactions.npy`, `rate_of_reactions.npy`).
+
+<Steps>
+
+### Import joblib and utilities
+
+```python parallel_setup.py
+from joblib import Parallel, delayed
+import utilities as util
+from TuLIP import sill_controls
+import itertools
+```
+
+### Define your parameter lists
+
+Identify the fluxes, iteration indices (rows in `n_sills.csv`), and z-indices (along-strike cross-sections) you want to sweep. The `itertools.product()` call generates every combination.
+
+```python params.py
+x, y, dx, dy = 300000, 12000, 50, 50
+
+# Magma flux values to sweep (m³/yr)
+fluxy_list = [int(3e9), int(3e8), int(3e7)]
+
+# Row indices into n_sills.csv — one row per total-volume scenario
+iter_list = [0, 1, 2]
+
+# Along-strike slice indices through the 3D sill cube
+z_index_list = [191, 284, 300, 493, 506]
+
+# All combinations of (iter, z_index, flux)
+pairs = itertools.product(iter_list, z_index_list, fluxy_list)
+
+# How often to write a VTK snapshot (every N time steps)
+saving_factor = [100]
+```
+
+### Launch the parallel run
+
+Pass each `(iter, z_index, flux)` tuple to `util.cooler()` via `joblib.Parallel`. Use `n_jobs=-1` to use all available CPU cores, or set an explicit count such as `n_jobs=30` to cap worker memory use.
+
+```python cooling_run.py
+from joblib import Parallel, delayed
+import itertools
+import utilities as util
+from TuLIP import sill_controls
+
+x, y, dx, dy = 300000, 12000, 50, 50
+diff_val       = 31.536        # typical thermal diffusivity (m²/yr)
+temp_grad_base = 30 / 1000     # geothermal gradient (°C/m)
+file_path_dir  = 'sillcubes/'
+post_cooling_time = 30000      # years of cooling after last sill
+saving_factor     = [100]
+
+# Build a sill_controls object once and share it with all workers
+sc = sill_controls(
+    x=x, y=y, dx=dx, dy=dy,
+    T_liquidus=1175, T_solidus=800,
+    include_external_heat=True,
+    calculate_closest_sill=True,
+)
+
+fluxy_list   = [int(3e9)]
+iter_list    = [0]
+z_index_list = [191, 284, 300, 493, 506]
+pairs        = itertools.product(iter_list, z_index_list, fluxy_list)
+
+Parallel(n_jobs=30)(
+    delayed(util.cooler)(
+        iter_1, z_index_1, fluxy_1,
+        sc              = sc,
+        diff_val        = diff_val,
+        temp_grad_base  = temp_grad_base,
+        file_path_dir   = file_path_dir,
+        post_cooling_time = post_cooling_time,
+        x=x, y=y, dx=dx, dy=dy,
+        saving_factor   = saving_factor,
+        save_dir_footnote = '',
+    )
+    for iter_1, z_index_1, fluxy_1 in pairs
+)
+```
+
+### Collect and combine results
+
+Each worker writes a `times.csv` to its own output directory. Aggregate them after the parallel run completes:
+
+```python collect_results.py
+import pandas as pd
+import numpy as np
+import os
+
+flux      = int(3e9)
+volumes   = float(pd.read_csv(f"sillcubes/{flux:.3e}/n_sills.csv")['volumes'][0])
+z_indices = [191, 284, 300, 493, 506]
+
+all_results = []
+for z in z_indices:
+    result_path = f"sillcubes/{flux:.3e}/{volumes:.3e}/{z}/times.csv"
+    if os.path.exists(result_path):
+        df = pd.read_csv(result_path)
+        df['z_index'] = z
+        all_results.append(df)
+
+combined = pd.concat(all_results, ignore_index=True)
+print(combined.groupby('z_index')['tot_RCO2'].max())
+```
+
+</Steps>
+
+## `utilities.cooler()` parameters
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `iter` | `int` | — | Row index into `n_sills.csv`; selects the total-volume scenario. |
+| `z_index` | `int` | — | Along-strike slice index through the 3D sill cube. |
+| `flux` | `float` | — | Magma supply rate (m³/yr); used to build the load directory path. |
+| `lat_range` | `list \| None` | `None` | Lateral range filter used when building the load path. |
+| `sc` | `sill_controls` | `None` | Shared `sill_controls` instance. Required. |
+| `diff_val` | `float` | `31.536` | Reference thermal diffusivity (m²/yr) used only for fallback dt calculation. |
+| `temp_grad_base` | `float` | `0.03` | Basal geothermal gradient (°C/m) for computing the bottom heat flux `q`. |
+| `file_path_dir` | `str` | `'sillcubes/'` | Root directory containing sill cubes and initial-state VTK files. |
+| `post_cooling_time` | `float` | `30000` | Years of additional cooling modelled after the last sill emplacement. |
+| `saving_factor` | `list[int]` | `[100]` | VTK snapshot frequency: write every `saving_factor[0]` time steps. Pass two values `[N_during, N_after]` to use different rates during and after emplacement. |
+| `x`, `y`, `dx`, `dy` | `float` | `None` | Domain dimensions; must match the `sill_controls` object. |
+| `rock_prop_dict` | `dict \| None` | `None` | Override rock property dictionary. Falls back to `sc.rock_prop_dict`. |
+| `save_dir_footnote` | `str \| None` | `None` | String appended to the output directory name to distinguish experiment variants. |
+
+## `utilities.sillburp_cooler()`
+
+Use `sillburp_cooler()` instead of `cooler()` when your initial maturation state was computed with `get_sillburp_initial_thermogenic_state()`. It reads `initial_sillburp_state_properties.vtk`, `initial_sillburp_state_carbon.vtk`, `progress_of_reactions.npy`, `rate_of_reactions.npy`, and optionally `sillburp_weights.csv` from `file_path_dir`. The call signature is identical to `cooler()`, and it passes `model='sillburp'` to `emplace_sills()` internally.
+
+```python sillburp_example.py
+Parallel(n_jobs=30)(
+    delayed(util.sillburp_cooler)(
+        iter_1, z_index_1, fluxy_1,
+        sc=sc, x=x, y=y, dx=dx, dy=dy,
+        file_path_dir=file_path_dir,
+        post_cooling_time=post_cooling_time,
+        saving_factor=saving_factor,
+    )
+    for iter_1, z_index_1, fluxy_1 in pairs
+)
+```
+
+<Tip>
+Build your sill cubes and generate the 2D slice files **before** launching the parallel run. Call `sc.generate_sill_2D_slices(fluxy_list, iter_list, z_index_list, file_dir=file_path_dir)` once to extract and save each cross-section as a separate `.npy` file. Workers load these slices at startup — no cube rebuilding occurs during the parallel run.
+</Tip>
+
+<Warning>
+Each worker loads its own copy of `props_array`, the sill cube slice, and all carbon-model state arrays into RAM. With 30 workers and a 300 × 12 km domain at 50 m spacing (6000 × 240 grid), peak memory per worker is roughly 500 MB. Multiply by `n_jobs` to estimate total RAM demand before choosing a core count. If you exceed available memory, joblib will silently slow down due to swap usage; reduce `n_jobs` accordingly.
+</Warning>

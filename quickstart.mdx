@@ -1,47 +1,129 @@
 ---
-title: "Quickstart"
-description: "Begin with a guide on the fastest path to a successful outcome"
+title: "Get started with TuLIP"
+sidebarTitle: "Quickstart"
+description: "Learn how to install TuLIP, set up a crustal domain, run the built-in example sill-intrusion simulation, and interpret the output plots."
 ---
 
-Describe how someone begins using your product. What is the first thing they need to do? Are there any prerequisites?
-
-A quickstart should take someone from zero to using your product. They'll get a quick win and a sense of what they can accomplish.
-
-## Prerequisites
-
-Before you begin, you must have:
-
-- Requirement one (for example, Node.js 18+, a free account, an API key)
-- Requirement two (for example, a compatible device, a compatible browser, a compatible operating system)
-
-## Get started
+TuLIP (Thermally understanding Large Igneous Provinces) is a Python library for simulating 2D heat diffusion and carbon emissions driven by magmatic sill intrusions in the Earth's crust. This page walks you through installing the required dependencies, setting up your first crustal domain, and running the built-in example to verify everything is working.
 
 <Steps>
-  <Step title="Install">
-    Describe how to install your product or sign up.
+
+  <Step title="Install TuLIP and its dependencies">
+    Clone the TuLIP repository and install the core Python dependencies with pip. TuLIP relies on NumPy and SciPy for numerics, pandas for tabular data, pypardiso for fast sparse-matrix solves, and numba for JIT-compiled inner loops.
 
     ```bash
-    npm install your-package
+    git clone https://github.com/Aristle12/TuLIP.git
+    cd TuLIP
+    pip install numpy scipy pandas pypardiso numba
     ```
-  </Step>
-  <Step title="Configure">
-    Describe any setup or configuration needed before first use.
+
+    <Note>
+      pypardiso links against Intel MKL. On Apple Silicon machines the install may fall back to a slower scipy sparse solver automatically — see the [Installation](/installation) page for details.
+    </Note>
+
+    For the full scientific stack (3D visualisation with PyVista, HDF5 output, network graphs, and parallel job control) install the remaining optional packages:
 
     ```bash
-    your-cli init
+    pip install matplotlib pyvista h5py networkx joblib seaborn tqdm autograd
     ```
   </Step>
-  <Step title="Run it">
-    Show the first thing a user does to see it working.
 
-    ```bash
-    your-cli start
+  <Step title="Import TuLIP and create a domain controller">
+    Import `sill_controls` and instantiate it with the physical dimensions of the crustal block you want to model. The four required arguments define the horizontal extent (`x`), vertical thickness (`y`), and the grid node spacing in each direction (`dx`, `dy`) — all in metres.
+
+    ```python
+    from TuLIP import sill_controls
+
+    sc = sill_controls(
+        x=300000,   # 300 km lateral extent
+        y=12000,    # 12 km crustal thickness
+        dx=250,     # 250 m node spacing in x
+        dy=250,     # 250 m node spacing in y
+    )
+    ```
+
+    `sill_controls` builds the thermal-conductivity grid, loads the default rock-property dictionary (shale, sandstone, limestone, granite, basalt, peridotite), and wires together the `cool` (heat-diffusion) and `rules` (sill-geometry) sub-systems. You can override any default through keyword arguments — see the [API Reference](/reference/sill-controls) for the full parameter list.
+
+    <Tip>
+      For a quick sanity check, print `sc.rock_prop_dict` to confirm the default lithology properties loaded correctly.
+    </Tip>
+  </Step>
+
+  <Step title="Run the built-in example simulation">
+    TuLIP ships an `examples` class that bundles a complete end-to-end run: it initialises a layered crustal column, generates a stochastic sill swarm, advances the thermal and carbon-emission model through emplacement and cooling phases, and saves result plots.
+
+    ```python
+    from TuLIP import examples
+
+    ex = examples()      # uses defaults: x=300000, y=35000, dx=250, dy=250
+    ex.example_run()
+    ```
+
+    The run prints progress messages as each phase completes:
+
+    ```
+    Length of time_steps: 92814
+    sillcube built
+    Current time before function: 3000000
+    Got initial emissions state
+    Model Run complete
+    ```
+
+    <Note>
+      The first call to any numba-JIT-compiled function incurs a one-time compilation delay of 10–60 seconds. Subsequent calls within the same session are fast.
+    </Note>
+
+    You can also pass custom dimensions to `examples` if you want a smaller, faster test domain:
+
+    ```python
+    ex = examples(x=150000, y=12000, dx=500, dy=500)
+    ex.example_run()
     ```
   </Step>
+
+  <Step title="Inspect the output plots">
+    `example_run()` creates a `plots/` directory in your working folder and writes two PNG files there.
+
+    | File | What it shows |
+    |------|---------------|
+    | `plots/bedrock_distribution.png` | Colour-coded map of the initial rock-type grid (shale, sandstone, granite, peridotite layers) plotted against depth (km) and lateral extent (km). Confirms your lithology setup is correct before running any intrusions. |
+    | `plots/CarbonEmisisons.png` | Time-series of log₁₀ total released CO₂ (mol) starting from the pre-conditioning phase through sill emplacement. Use this to assess the magnitude and timing of thermogenic carbon release driven by the sill swarm. |
+
+    Open both files to confirm the model ran to completion:
+
+    ```python
+    import matplotlib.pyplot as plt
+    import matplotlib.image as mpimg
+
+    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+    for ax, path in zip(axes, ['plots/bedrock_distribution.png',
+                                'plots/CarbonEmisisons.png']):
+        ax.imshow(mpimg.imread(path))
+        ax.axis('off')
+    plt.tight_layout()
+    plt.show()
+    ```
+
+    <Tip>
+      The carbon-emission curve is plotted on a log₁₀ scale. A smooth, rising trend during the emplacement window followed by a plateau in the cooling phase is the expected signature of a successful run.
+    </Tip>
+  </Step>
+
 </Steps>
 
-<Tip>
-  Give people a way to get help. This could be a link to a support page, a chat with a customer support agent, or a forum for your product.
+## Next steps
 
-  Example: Need help? Reach out to us at [support@yourcompany.com](mailto:support@yourcompany.com).
-</Tip>
+<CardGroup cols={2}>
+  <Card title="Core Concepts" icon="book-open" href="/concepts/overview">
+    Understand the heat-diffusion solvers, sill-geometry rules, and carbon-emission kinetics that underpin every TuLIP simulation.
+  </Card>
+  <Card title="Build a Sill Cube" icon="cube" href="/guides/building-sill-cube">
+    Generate a stochastic 3D sill swarm with `build_sillcube` and extract 2D cross-section slices for your simulation.
+  </Card>
+  <Card title="Configure the Domain" icon="sliders" href="/configuration/domain-setup">
+    Set custom grid dimensions, boundary temperatures, thermal conductivity functions, and rock-property dictionaries.
+  </Card>
+  <Card title="API Reference" icon="code" href="/reference/sill-controls">
+    Full parameter reference for `sill_controls`, `cool`, `rules`, `emit`, and the `examples` helper class.
+  </Card>
+</CardGroup>

@@ -1,0 +1,180 @@
+---
+title: "Visualize TuLIP outputs in ParaView via VTK"
+sidebarTitle: "VTK & ParaView"
+description: "Open TuLIP VTK snapshots in ParaView for interactive visualization, or load them with PyVista for scripted field inspection and lithology colour mapping."
+---
+
+During an `emplace_sills()` run, TuLIP uses [PyVista](https://docs.pyvista.org/) to write VTK snapshot files at regular intervals to your `save_dir`. These files capture the full 2D field state at each saved time step and can be opened directly in [ParaView](https://www.paraview.org/) for interactive exploration or loaded in Python with `pyvista.read()` for scripted post-processing.
+
+## What gets exported
+
+Each snapshot VTK file is a `pv.ImageData` object (structured grid) whose point data contains the following fields:
+
+| Field name | Dtype | Description |
+|---|---|---|
+| `Temperature` | `float` | Temperature field (°C) at the saved time step |
+| `Lithology` | `str` / `object` | Rock type string per grid cell (e.g. `'shale'`, `'basalt_melt'`) |
+| `Density` | `float` | Rock density (kg/m³) |
+| `Porosity` | `float` | Porosity (dimensionless fraction) |
+| `TOC` | `float` | Remaining total organic carbon (wt %) |
+| `Specific Heat` | `float` | Specific heat capacity (J/kg·K) |
+| `Sills` | `float` | Integer index of the sill occupying each cell (−1 for host rock) |
+| `Rate of CO2` | `float` | Instantaneous thermogenic CO₂ emission rate (kg/m³/yr) |
+| `Rate of organic matter` | `float` | Rate of organic matter conversion at the saved time step |
+| `Vitrinite reflectance` | `float` | Vitrinite reflectance (%Ro) — written when `model='silli'` |
+
+## Snapshot frequency
+
+TuLIP writes a VTK snapshot whenever `l % saving_factor[0] == 0`, where `l` is the loop index over `time_steps`. You control this by setting `saving_factor` in `emplace_sills()` or `utilities.cooler()`.
+
+- **`saving_factor=[100]`** — write one file every 100 time steps throughout the whole run.
+- **`saving_factor=[50, 200]`** — write every 50 steps while sills are still being emplaced, then every 200 steps once emplacement is complete. This reduces disk use during the slower post-emplacement cooling phase.
+
+At `dt ≈ 0.05` yr and a run length of 100 000 steps, `saving_factor=[100]` produces 1 000 snapshot files. Plan your disk budget before increasing snapshot frequency.
+
+## Opening in ParaView
+
+<Steps>
+
+### Open the VTK file
+
+Launch ParaView, then go to **File → Open**. Navigate to your `save_dir` and select one or more `Properties_<step>.vtk` files. To load a time sequence, select all files in the directory and ParaView will treat them as an animation.
+
+### Apply the reader
+
+Click the **Apply** button in the Properties panel on the left. ParaView reads the file and shows the grid outline in the viewport.
+
+### Choose a field to color by
+
+In the toolbar at the top of the viewport, open the **Coloring** dropdown (it may show `Solid Color` by default). Select any of the exported field names — for example, `Temperature` or `Vitrinite reflectance`. Click the **Rescale** button (the colour-range icon) to fit the colour map to the data range.
+
+### Animate through time steps
+
+If you loaded multiple files as a sequence, use the **Play** button in the time controls toolbar to step through the snapshots and watch sill emplacement and cooling evolve.
+
+### Compute temperature difference between snapshots
+
+To visualise the temperature anomaly introduced by a sill, load two snapshots as separate sources, then apply the **Calculator** filter with the expression:
+
+```
+inputs[0].PointData['Temperature'] - inputs[1].PointData['Temperature']
+```
+
+</Steps>
+
+## Using PyVista directly
+
+Load and plot a VTK snapshot entirely in Python without opening ParaView:
+
+```python pyvista_plot.py
+import pyvista as pv
+import numpy as np
+
+# Load a snapshot
+snapshot = pv.read('sillcubes/3.000e+09/5.000e+17/300/Properties_500.vtk')
+
+# Inspect available fields
+print(snapshot.point_data.keys())
+# e.g. ['Temperature', 'Lithology', 'Density', 'Porosity',
+#        'TOC', 'Specific Heat', 'Sills',
+#        'Rate of CO2', 'Rate of organic matter', 'Vitrinite reflectance']
+
+# Get the temperature array reshaped to 2D
+dims   = snapshot.dimensions          # (n_cols, n_rows, 1)
+T_snap = snapshot.point_data['Temperature'].reshape(dims[1], dims[0])
+
+# Quick interactive render coloured by temperature
+snapshot.plot(
+    scalars='Temperature',
+    cmap='inferno',
+    show_edges=False,
+    scalar_bar_args={'title': 'Temperature (°C)'},
+)
+```
+
+For a matplotlib-based plot (useful in headless environments), extract the array and call `imshow()`:
+
+```python pyvista_matplotlib.py
+import pyvista as pv
+import numpy as np
+import matplotlib.pyplot as plt
+
+snapshot = pv.read('sillcubes/3.000e+09/5.000e+17/300/Properties_500.vtk')
+dims     = snapshot.dimensions  # (n_x, n_y, 1)
+
+T_2d = snapshot.point_data['Temperature'].reshape(dims[1], dims[0])
+Ro_2d = snapshot.point_data['Vitrinite reflectance'].reshape(dims[1], dims[0])
+
+fig, axes = plt.subplots(2, 1, figsize=(14, 6), sharex=True)
+
+im0 = axes[0].imshow(T_2d, cmap='inferno', aspect='auto', vmin=0, vmax=1200)
+fig.colorbar(im0, ax=axes[0], label='Temperature (°C)')
+axes[0].set_ylabel('Depth node')
+
+im1 = axes[1].imshow(Ro_2d, cmap='YlOrRd', aspect='auto', vmin=0, vmax=4)
+fig.colorbar(im1, ax=axes[1], label='%Ro')
+axes[1].set_ylabel('Depth node')
+axes[1].set_xlabel('Lateral node')
+
+plt.tight_layout()
+plt.savefig('output/snapshot_500.png', dpi=150)
+plt.close()
+```
+
+## Lithology colour mapping
+
+The `Lithology` field stores string values such as `'shale'`, `'sandstone'`, `'basalt_melt'`, etc. To render lithology as a discrete colour map, convert strings to integers using `sc.lith_plot_dict`, which maps each rock-type name to a consecutive integer code:
+
+```python lith_colormap.py
+import numpy as np
+import matplotlib.pyplot as plt
+import matplotlib.colors as mcolors
+from TuLIP import sill_controls
+import pyvista as pv
+
+sc = sill_controls(x=300000, y=12000, dx=50, dy=50)
+
+# sc.lith_plot_dict maps rock names to integers, e.g.:
+# {'shale': 0, 'sandstone': 1, 'limestone': 2, 'granite': 3,
+#  'basalt': 4, 'peridotite': 5, 'basalt_melt': 6}
+print(sc.lith_plot_dict)
+
+snapshot = pv.read('sillcubes/3.000e+09/5.000e+17/300/Properties_500.vtk')
+dims     = snapshot.dimensions
+
+lith_str = snapshot.point_data['Lithology'].reshape(dims[1], dims[0])
+lith_int = np.vectorize(sc.lith_plot_dict.get)(lith_str).astype(int)
+
+n_liths = len(sc.lith_plot_dict)
+cmap    = plt.cm.get_cmap('tab10', n_liths)
+labels  = list(sc.lith_plot_dict.keys())
+
+fig, ax = plt.subplots(figsize=(14, 4))
+im = ax.imshow(lith_int, cmap=cmap, vmin=-0.5, vmax=n_liths - 0.5, aspect='auto')
+cbar = fig.colorbar(im, ax=ax, ticks=list(sc.lith_plot_dict.values()))
+cbar.set_ticklabels(labels)
+cbar.set_label('Rock type')
+ax.set_xlabel('Lateral node')
+ax.set_ylabel('Depth node')
+plt.tight_layout()
+plt.savefig('output/lithology_snapshot.png', dpi=150)
+plt.close()
+```
+
+The default integer codes and their corresponding lithologies are:
+
+| Integer | Rock type |
+|---|---|
+| 0 | `shale` |
+| 1 | `sandstone` |
+| 2 | `limestone` |
+| 3 | `granite` |
+| 4 | `basalt` |
+| 5 | `peridotite` |
+| 6 | `basalt_melt` |
+
+If you initialised `sill_controls` with a custom `rock_prop_dict`, the integer codes are assigned in the order the keys appear in that dictionary — check `sc.lith_plot_dict` at runtime to confirm your mapping.
+
+<Note>
+TuLIP names each snapshot file `Properties_<l>.vtk`, where `<l>` is the loop index over `time_steps` (not the physical simulation time in years). To convert a file index back to simulation time, load the corresponding `dts.csv` file from the same `save_dir` (written by `emplace_sills()`) and compute `time = time_steps[saving_time_step_index + l]`. Alternatively, load `times.csv` from the same directory when using `utilities.cooler()`, which records the actual `time_steps` alongside each row.
+</Note>

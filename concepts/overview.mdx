@@ -1,0 +1,86 @@
+---
+title: "How TuLIP models magmatic sill systems across the crust"
+sidebarTitle: "Overview"
+description: "Learn how TuLIP simulates 2D heat diffusion, stochastic sill emplacement, and thermogenic CO₂ emissions in Large Igneous Provinces."
+---
+
+TuLIP simulates the thermal evolution of a 2D crustal cross-section as swarms of magmatic sills intrude through sedimentary and igneous rocks over geological timescales. At each time step, it injects new sill bodies drawn from a pre-computed stochastic catalogue, advances the temperature field by solving the 2D heat diffusion equation, and calculates how organic-rich sediments mature under the added heat — releasing CO₂ as they do. The result is a coupled thermal and geochemical record of a Large Igneous Province (LIP) event, from the first intrusion through the post-emplacement cooling phase.
+
+## The modeling workflow
+
+A complete TuLIP run proceeds in four sequential phases.
+
+### 1. Define the model domain
+
+You instantiate a `sill_controls` object, specifying the physical extent of the crust (`x`, `y`), the grid resolution (`dx`, `dy`), magma phase-change temperatures, and thermal property options. This step builds the numerical grid and loads all rock-property look-up tables.
+
+```python
+from TuLIP import sill_controls
+
+sc = sill_controls(
+    x=300_000,        # crustal width, m
+    y=12_000,         # crustal thickness, m
+    dx=50,            # horizontal grid spacing, m
+    dy=50,            # vertical grid spacing, m
+    T_liquidus=1200,  # °C
+    T_solidus=800,    # °C
+    sill_cube_dir="my_run/",
+)
+```
+
+You then populate a `props_array` — a 3D NumPy array whose layers encode temperature, lithology, porosity, density, TOC, and specific heat at every grid node.
+
+### 2. Build the sill cube
+
+Before time-stepping begins, you call `build_sillcube()` to pre-compute the entire intrusion catalogue. This function draws random depths, lateral positions, and dimensions for every sill from user-supplied statistical distributions, then packs the results into a 3D array (the *sill cube*) indexed by along-strike position, lateral position, and sill index. Separating this from the main loop keeps the simulation reproducible and lets you re-run the same intrusion history with different thermal parameters.
+
+### 3. Compute the initial thermal maturation state
+
+Sedimentary rocks accumulate thermal maturity over geological time before any LIP event begins. You call `get_silli_initial_thermogenic_state()` (SILLi model) or `get_sillburp_initial_thermogenic_state()` (Sillburp model) to advance the organic-matter kinetics over a specified pre-emplacement interval. This step sets realistic baseline values for TOC, vitrinite reflectance, and the kinetic state variables that the main simulation will continue evolving.
+
+### 4. Run the time-stepping simulation
+
+`emplace_sills()` drives the main loop. At each time step it:
+
+1. Reads the current temperature, lithology, and property fields from `props_array`.
+2. Calculates heat sources (radiogenic heat, latent heat of crystallization).
+3. Advances the temperature field with the chosen finite-difference solver.
+4. Converts any magma that has dropped below the solidus back to solid rock.
+5. Injects the next sill(s) from the sill cube when the scheduled emplacement time arrives, pushing overlying strata upward.
+6. Computes thermogenic CO₂ release from organic-rich sediments.
+7. Optionally saves VTK snapshots for visualization.
+
+## Key objects
+
+| Object | Role |
+|---|---|
+| `sill_controls` | Orchestrates the full simulation — holds the grid, property dictionaries, and high-level workflow methods such as `build_sillcube()` and `emplace_sills()`. |
+| `cool` | Contains all numerical heat-diffusion solvers, plus helper functions for thermal conductivity, specific heat, latent heat, and radiogenic heat. |
+| `emit` | Implements the SILLi (Easy%Ro) and Sillburp carbon-emission kinetics, plus carbonate decarbonation. |
+| `rules` | Provides the geometric utilities for placing individual sills, manipulating the stratigraphy mesh, and managing lithology dictionaries. |
+
+## Explore the concepts
+
+<CardGroup cols={2}>
+  <Card
+    title="Sill Emplacement"
+    icon="mountain"
+    href="/concepts/sill-emplacement"
+  >
+    How TuLIP generates and injects stochastic sill populations into the model domain.
+  </Card>
+  <Card
+    title="Heat Transfer"
+    icon="temperature-high"
+    href="/concepts/heat-transfer"
+  >
+    The finite-difference solvers that advance the temperature field and the thermal properties they rely on.
+  </Card>
+  <Card
+    title="Carbon Emissions"
+    icon="cloud"
+    href="/concepts/carbon-emissions"
+  >
+    How TuLIP converts rising temperatures into thermogenic CO₂ using the SILLi and Sillburp models.
+  </Card>
+</CardGroup>

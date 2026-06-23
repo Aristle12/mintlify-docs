@@ -1,0 +1,162 @@
+---
+title: "Analyze and visualize TuLIP simulation outputs"
+sidebarTitle: "Analyze Results"
+description: "Plot temperature and CO₂ time series, read vitrinite reflectance maps, scale 2D results to province-wide estimates, and save simulation state to HDF5."
+---
+
+TuLIP produces three categories of output: in-memory arrays you can plot immediately, `times.csv` files written by each parallel worker, and VTK snapshot files saved at regular intervals during emplacement. This guide covers how to work with each of them using matplotlib, the `bloom` module for province-scale scaling, and the HDF5 checkpoint utilities built into `sill_controls`.
+
+## Temperature field
+
+After `emplace_sills()` returns, the final temperature field lives in `props_array[sc.Temp_index]`. Plot it as a 2D image with depth on the y-axis and lateral extent on the x-axis:
+
+```python plot_temperature.py
+import numpy as np
+import matplotlib.pyplot as plt
+
+# props_array and sc already defined from the simulation run
+T_final = np.array(props_array[sc.Temp_index], dtype=float)
+
+fig, ax = plt.subplots(figsize=(14, 4))
+im = ax.imshow(
+    T_final,
+    cmap='inferno',
+    aspect='auto',
+    extent=[0, sc.x / 1000, sc.y / 1000, 0],  # km
+    vmin=0,
+    vmax=1200,
+)
+cbar = fig.colorbar(im, ax=ax, label='Temperature (°C)')
+ax.set_xlabel('Lateral extent (km)')
+ax.set_ylabel('Depth (km)')
+ax.set_title('Final temperature field')
+plt.tight_layout()
+plt.savefig('output/temperature_final.png', dpi=150)
+plt.close()
+```
+
+To compare temperature at different snapshots, load the VTK files written during the run and subtract them — this is the approach suggested by the in-code ParaView comment (`inputs[0].PointData['Temperature'] - inputs[1].PointData['Temperature']`).
+
+## Carbon emissions
+
+`tot_RCO2` is a list of per-timestep CO₂ emission rates (kg/yr) starting from the beginning of the emplacement phase. Plot it on a log scale to make the pulse structure visible:
+
+```python plot_co2.py
+import numpy as np
+import matplotlib.pyplot as plt
+import pandas as pd
+
+# Load from the times.csv written by utilities.cooler()
+times_csv = pd.read_csv('sillcubes/3.000e+09/5.000e+17/300/times.csv')
+time      = np.array(times_csv['time_steps'])
+tot_RCO2  = np.array(times_csv['tot_RCO2'])
+
+# Convert to GtCO₂/yr
+GtCO2 = tot_RCO2 / 1e12
+
+fig, ax = plt.subplots(figsize=(10, 4))
+ax.semilogy(time - time[0], GtCO2 + 1e-30, color='firebrick', linewidth=1.5)
+ax.set_xlabel('Time since emplacement start (years)')
+ax.set_ylabel('CO₂ emission rate (Gt CO₂/yr)')
+ax.set_title('Thermogenic carbon emissions')
+plt.tight_layout()
+plt.savefig('output/co2_time_series.png', dpi=150)
+plt.close()
+```
+
+To convert CO₂ mass to carbon mass, divide by 3.67 (the molar mass ratio CO₂/C). The `bloom.units()` helper does both conversions in one call:
+
+```python units_example.py
+import bloom
+
+GtCO2, GtC = bloom.units(tot_RCO2)
+```
+
+## Vitrinite reflectance
+
+Vitrinite reflectance (`percRo_silli`) is a 2D array whose values encode the peak thermal maturity experienced by organic-rich sediments. Values below 0.5 %Ro indicate immature (unaltered) kerogen; 0.5–1.3 %Ro corresponds to the oil-generation window; values above 2 %Ro indicate over-mature, dry-gas or anthracite conditions. Regions heated by sill intrusion show anomalously high %Ro surrounded by low-maturity host rock.
+
+```python plot_ro.py
+import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib.colors import BoundaryNorm
+
+Ro_map = np.array(percRo_silli, dtype=float)
+
+# Mask cells that were replaced by basalt_melt (Ro undefined for magma)
+rock_final = props_array[sc.rock_index]
+Ro_map[rock_final == 'basalt_melt'] = np.nan
+
+levels = [0.2, 0.5, 1.0, 1.3, 2.0, 4.0]
+cmap   = plt.cm.get_cmap('YlOrRd', len(levels) - 1)
+norm   = BoundaryNorm(levels, cmap.N)
+
+fig, ax = plt.subplots(figsize=(14, 4))
+im = ax.imshow(
+    Ro_map,
+    cmap=cmap, norm=norm,
+    aspect='auto',
+    extent=[0, sc.x / 1000, sc.y / 1000, 0],
+)
+cbar = fig.colorbar(im, ax=ax, label='Vitrinite reflectance (%Ro)',
+                    ticks=levels)
+ax.set_xlabel('Lateral extent (km)')
+ax.set_ylabel('Depth (km)')
+ax.set_title('Vitrinite reflectance — end of simulation')
+plt.tight_layout()
+plt.savefig('output/vitrinite_reflectance.png', dpi=150)
+plt.close()
+```
+
+## Province-scale scaling
+
+Individual 2D slice simulations represent a thin along-strike cross-section of a much larger magmatic province. The `bloom.py` module provides functions to extrapolate single-slice CO₂ estimates to province-wide totals.
+
+**`bloom.scale_emissions(z_indexs, dx, dy, load_dir)`** fits a linear regression between cumulative emplaced volume and cumulative CO₂ across all slices in `z_indexs`. The slope (CO₂ per m³) is the scale factor used to predict province-wide emissions from province-wide volume estimates:
+
+```python scale_example.py
+import bloom
+
+z_indices = [191, 284, 300, 493, 506]
+load_dir  = 'sillcubes/3.000e+09/'
+
+# Writes scales.csv and per-volume CO2_stats.csv files
+bloom.scale_emissions(z_indices, dx=50, dy=50, load_dir=load_dir)
+```
+
+**`bloom.plot_average_emission_rates(fluxs, itera)`** produces a scatter plot of average CO₂ emission rate vs emplaced volume for multiple flux values.
+
+**`bloom.plot_heatmap_average_emissions(fluxs, iters, save_dir)`** generates a seaborn heatmap of log₁₀ average emission rates across the flux × volume parameter space.
+
+**`bloom.plot_heatmap_warming(fluxs, iters, save_dir, z_index)`** estimates atmospheric warming by converting scaled cumulative CO₂ to pCO₂ using a carbon-cycle reservoir model, then applies an equilibrium climate sensitivity of 3 °C per CO₂ doubling.
+
+## HDF5 checkpoints
+
+Save the complete state of a `sill_controls` instance to an HDF5 file mid-simulation so you can resume or inspect it later:
+
+```python hdf5_save.py
+from TuLIP import sill_controls
+
+# Save: all numeric attributes and dict entries are written as datasets
+sill_controls.store_objlist_as_hd5f('checkpoint_t3e6.h5', sc)
+```
+
+Reload the state back into a fresh `sill_controls` object:
+
+```python hdf5_load.py
+from TuLIP import sill_controls
+
+sc_restored = sill_controls(x=300000, y=12000, dx=50, dy=50)
+sc_restored.load_objlist_from_hd5f_into_class('checkpoint_t3e6.h5')
+```
+
+`store_objlist_as_hd5f` iterates over `vars(cls)` and writes scalars, arrays, lists, and dict entries. Attributes that are non-serialisable objects (e.g. callable functions, pyvista meshes) are skipped with a printed warning; re-attach them manually after reloading.
+
+<CardGroup cols={2}>
+  <Card title="VTK & ParaView" icon="cube" href="/guides/vtk-visualization">
+    Open snapshot VTK files in ParaView or load them with PyVista for programmatic 3D visualisation.
+  </Card>
+  <Card title="Build Sill Cube" icon="layer-group" href="/guides/building-sill-cube">
+    Revisit sill cube construction and the full parameter reference for `build_sillcube()`.
+  </Card>
+</CardGroup>

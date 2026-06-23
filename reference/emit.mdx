@@ -1,0 +1,354 @@
+---
+title: "emit class: carbon emission models reference"
+sidebarTitle: "emit"
+description: "Reference for the emit class: SILLi Easy%Ro, Sillburp multi-kerogen, and carbonate-breakdown methods for thermogenic carbon emission modelling in TuLIP."
+---
+
+The `emit` class implements the chemical-kinetics and carbon-emission models that quantify how intruding sills thermally degrade surrounding organic matter and carbonate rocks. Two primary models are available: the **SILLi** Easy%Ro model (Sweeney & Burnham, 1990), which tracks vitrinite reflectance and bulk TOC, and the **Sillburp** model (Jones et al., 2019), which resolves labile, refractory, and inert kerogen fractions as separate parallel-reaction networks. Both models include helper methods for carbonate CO₂ decarbonation. All methods are static.
+
+---
+
+## `SILLi_emissions`
+
+```python
+emit.SILLi_emissions(
+    T_field, density, lithology, porosity,
+    TOC_prev, dt,
+    TOCo=np.nan, W=np.nan
+)
+```
+
+Advances the Easy%Ro (SILLi) thermal-maturation model by one time step. The method integrates 20 parallel first-order Arrhenius reactions with activation energies between 34 and 72 kcal mol⁻¹ and a pre-exponential factor A = 10¹³ s⁻¹. The core integration loop is JIT-compiled via `_SILLi_core` for performance.
+
+Only nodes where `lithology` is `'shale'`, `'sandstone'`, `'dolostone'`, `'limestone'`, `'marl'`, or `'evaporite'` are computed.
+
+### Parameters
+
+<ParamField path="T_field" type="numpy.ndarray (shape=(a, b))" required>
+  Temperature field (°C). Cast internally to `float64`.
+</ParamField>
+
+<ParamField path="density" type="numpy.ndarray (shape=(a, b))" required>
+  Rock density (kg m⁻³).
+</ParamField>
+
+<ParamField path="lithology" type="numpy.ndarray (shape=(a, b))" required>
+  Lithology map of string objects identifying rock types at each node.
+</ParamField>
+
+<ParamField path="porosity" type="numpy.ndarray (shape=(a, b))" required>
+  Porosity (dimensionless fraction, 0–1).
+</ParamField>
+
+<ParamField path="TOC_prev" type="numpy.ndarray (shape=(a, b))" required>
+  Total organic carbon from the previous time step (weight fraction, 0–1). At the first call, pass the initial TOC field; it is stored internally as `TOCo`.
+</ParamField>
+
+<ParamField path="dt" type="float" required>
+  Time step (seconds, or years depending on calibration of `A` and `E`).
+</ParamField>
+
+<ParamField path="TOCo" type="numpy.ndarray | numpy.nan" default="numpy.nan">
+  Initial (maximum) TOC field at time zero. Inferred from `TOC_prev` on the first call when `W` is `numpy.nan`. **Must** be supplied on all subsequent calls.
+</ParamField>
+
+<ParamField path="W" type="numpy.ndarray (shape=(20, a, b)) | numpy.nan" default="numpy.nan">
+  State variable tracking remaining reaction potential for each of the 20 parallel channels. Initialised to ones on the first call. Pass the value returned by the previous call at every subsequent step.
+</ParamField>
+
+### Returns
+
+<ResponseField name="RCO2" type="numpy.ndarray (shape=(a, b))">
+  CO₂ generation rate (kg m⁻³ per time unit). Derived as `Rom × 3.67 / 100`.
+</ResponseField>
+
+<ResponseField name="Rom" type="numpy.ndarray (shape=(a, b))">
+  Organic matter loss rate (kg m⁻³ per time unit): `(1 − φ) · ρ · ΔTOC / dt`.
+</ResponseField>
+
+<ResponseField name="percRo" type="numpy.ndarray (shape=(a, b))">
+  Vitrinite reflectance (%Ro): `exp(−1.6 + 3.7 · F)` where `F` is the cumulative reaction fraction.
+</ResponseField>
+
+<ResponseField name="TOC" type="numpy.ndarray (shape=(a, b))">
+  Updated total organic carbon: `TOCo · (1 − F)` at reactive nodes.
+</ResponseField>
+
+<ResponseField name="W" type="numpy.ndarray (shape=(20, a, b))">
+  Updated state variable. Pass to the next call.
+</ResponseField>
+
+### Example
+
+```python
+from TuLIP import emit
+import numpy as np
+
+a, b = 50, 100
+T = np.ones((a, b)) * 120.0            # 120 °C everywhere
+density = np.ones((a, b)) * 2500.0
+lithology = np.empty((a, b), dtype=object)
+lithology[:] = 'shale'
+porosity = np.ones((a, b)) * 0.1
+TOC = np.ones((a, b)) * 0.02           # 2 wt% TOC
+
+# First call — W and TOCo are auto-initialised
+RCO2, Rom, percRo, TOC, W = emit.SILLi_emissions(
+    T, density, lithology, porosity, TOC, dt=1.0
+)
+
+# Subsequent calls
+RCO2, Rom, percRo, TOC, W = emit.SILLi_emissions(
+    T, density, lithology, porosity, TOC, dt=1.0,
+    TOCo=np.ones((a, b)) * 0.02, W=W
+)
+```
+
+---
+
+## `sillburp`
+
+```python
+emit.sillburp(
+    T_field, TOC_prev, density, lithology, porosity,
+    dt, reaction_energies,
+    TOCo=None, oil_production_rate=0,
+    progress_of_reactions=np.nan,
+    rate_of_reactions=np.nan,
+    weights=None
+)
+```
+
+Advances the Sillburp kinetic model by one time step. Four kerogen sub-populations are modelled — **labile** (7 channels), **refractory** (21 channels), **inert** (55 channels), and a **secondary cracking** network (7 channels) — with distinct pre-exponential factors and activation-energy distributions. The core loop is JIT-compiled via `_sillburp_core`.
+
+Reactions are computed only at `'shale'` and `'sandstone'` nodes.
+
+### Parameters
+
+<ParamField path="T_field" type="numpy.ndarray (shape=(a, b))" required>
+  Temperature field (°C).
+</ParamField>
+
+<ParamField path="TOC_prev" type="numpy.ndarray (shape=(a, b))" required>
+  Total organic carbon from the previous step.
+</ParamField>
+
+<ParamField path="density" type="numpy.ndarray (shape=(a, b))" required>
+  Rock density (kg m⁻³).
+</ParamField>
+
+<ParamField path="lithology" type="numpy.ndarray (shape=(a, b))" required>
+  Lithology map.
+</ParamField>
+
+<ParamField path="porosity" type="numpy.ndarray (shape=(a, b))" required>
+  Porosity (fraction).
+</ParamField>
+
+<ParamField path="dt" type="float" required>
+  Time step.
+</ParamField>
+
+<ParamField path="reaction_energies" type="numpy.ndarray (shape=(4, 55))" required>
+  Activation energy distributions from `get_sillburp_reaction_energies`.
+</ParamField>
+
+<ParamField path="TOCo" type="numpy.ndarray | None" default="None">
+  Initial TOC field. Set to `TOC_prev` automatically on the first call.
+</ParamField>
+
+<ParamField path="oil_production_rate" type="numpy.ndarray | float" default="0">
+  Oil generation/cracking rate from the previous step. Pass back the value returned by this function.
+</ParamField>
+
+<ParamField path="progress_of_reactions" type="numpy.ndarray (shape=(4, 55, a, b)) | numpy.nan" default="numpy.nan">
+  Fractional completion of each reaction channel. Initialised to zeros on the first call.
+</ParamField>
+
+<ParamField path="rate_of_reactions" type="numpy.ndarray (shape=(4, 55, a, b)) | numpy.nan" default="numpy.nan">
+  Instantaneous reaction rates. Initialised to zeros on the first call.
+</ParamField>
+
+<ParamField path="weights" type="numpy.ndarray (shape=(4, a, b)) | None" default="None">
+  Optional spatial weights for averaging the four kerogen channels. When `None`, equal weights are used.
+</ParamField>
+
+### Returns
+
+<ResponseField name="RCO2" type="numpy.ndarray (shape=(a, b))">
+  CO₂ generation rate.
+</ResponseField>
+
+<ResponseField name="Rom" type="numpy.ndarray (shape=(a, b))">
+  Organic matter loss rate.
+</ResponseField>
+
+<ResponseField name="progress_of_reactions" type="numpy.ndarray (shape=(4, 55, a, b))">
+  Updated reaction progress. Pass to the next call.
+</ResponseField>
+
+<ResponseField name="oil_production_rate" type="numpy.ndarray (shape=(a, b))">
+  Rate of oil generation and cracking from the secondary network.
+</ResponseField>
+
+<ResponseField name="TOC" type="numpy.ndarray (shape=(a, b))">
+  Updated total organic carbon.
+</ResponseField>
+
+<ResponseField name="rate_of_reactions" type="numpy.ndarray (shape=(4, 55, a, b))">
+  Updated reaction rates. Pass to the next call.
+</ResponseField>
+
+### Example
+
+```python
+from TuLIP import emit
+import numpy as np
+
+reaction_energies = emit.get_sillburp_reaction_energies()
+a, b = 50, 100
+T = np.ones((a, b)) * 150.0
+TOC = np.ones((a, b)) * 0.02
+density = np.ones((a, b)) * 2500.0
+lithology = np.empty((a, b), dtype=object); lithology[:] = 'shale'
+porosity = np.ones((a, b)) * 0.1
+
+RCO2, Rom, prog, oil, TOC, rate = emit.sillburp(
+    T, TOC, density, lithology, porosity,
+    dt=1.0, reaction_energies=reaction_energies
+)
+```
+
+---
+
+## `get_sillburp_reaction_energies`
+
+```python
+emit.get_sillburp_reaction_energies()
+```
+
+Generates the activation-energy distributions for all four Sillburp kerogen sub-populations using Gaussian quadrature approximations to normal distributions. Based on Jones et al. (2019). You must call this once and pass the result to `sillburp` at every time step.
+
+### Returns
+
+<ResponseField name="reaction_energies" type="numpy.ndarray (shape=(4, 55))">
+  Activation energies (J mol⁻¹) for each of the four reaction networks:
+  - Row 0 — Labile kerogen: 7 channels, mean 208 kJ mol⁻¹, σ 5 kJ mol⁻¹.
+  - Row 1 — Refractory kerogen: 21 channels, mean 279 kJ mol⁻¹, σ 13 kJ mol⁻¹.
+  - Row 2 — Inert kerogen: 55 channels, mean 242 kJ mol⁻¹, σ 41 kJ mol⁻¹.
+  - Row 3 — Secondary cracking: 7 channels, mean 230 kJ mol⁻¹, σ 5 kJ mol⁻¹.
+
+  Unused columns (beyond each network's channel count) are zero-filled.
+</ResponseField>
+
+### Example
+
+```python
+from TuLIP import emit
+reaction_energies = emit.get_sillburp_reaction_energies()
+print(reaction_energies.shape)   # (4, 55)
+```
+
+---
+
+## `get_init_CO2_percentages`
+
+```python
+emit.get_init_CO2_percentages(T_field, lithology, density, dy)
+```
+
+Calculates the initial equilibrium CO₂ content dissolved in carbonate rocks at the start of the simulation by interpolating P–T phase diagrams loaded from `.mat` files (`dat/Dolostone.mat`, `dat/DolostoneEvaporite.mat`, `dat/Marl.mat`). Only `'dolostone'`, `'limestone'`, `'evaporite'`, and `'marl'` nodes are processed.
+
+### Parameters
+
+<ParamField path="T_field" type="numpy.ndarray (shape=(a, b))" required>
+  Temperature field (°C).
+</ParamField>
+
+<ParamField path="lithology" type="numpy.ndarray (shape=(a, b))" required>
+  Lithology map.
+</ParamField>
+
+<ParamField path="density" type="numpy.ndarray (shape=(a, b))" required>
+  Density field (kg m⁻³), used to compute lithostatic pressure column.
+</ParamField>
+
+<ParamField path="dy" type="float" required>
+  Vertical grid spacing (m) for pressure integration.
+</ParamField>
+
+### Returns
+
+<ResponseField name="init_CO2" type="numpy.ndarray (shape=(a, b))">
+  Equilibrium CO₂ percentage field. Zero at non-carbonate nodes.
+</ResponseField>
+
+---
+
+## `get_breakdown_CO2`
+
+```python
+emit.get_breakdown_CO2(T_field, lithology, density, breakdownCO2, dy, dt)
+```
+
+Computes the instantaneous CO₂ release rate from carbonate decarbonation reactions. At each time step, the method re-evaluates the equilibrium CO₂ capacity from the phase diagram and computes the positive increment above the previously tracked maximum (i.e., CO₂ is only released if capacity decreases with rising temperature or pressure).
+
+### Parameters
+
+<ParamField path="T_field" type="numpy.ndarray (shape=(a, b))" required>
+  Current temperature field (°C).
+</ParamField>
+
+<ParamField path="lithology" type="numpy.ndarray (shape=(a, b))" required>
+  Lithology map.
+</ParamField>
+
+<ParamField path="density" type="numpy.ndarray (shape=(a, b))" required>
+  Density field (kg m⁻³).
+</ParamField>
+
+<ParamField path="breakdownCO2" type="numpy.ndarray (shape=(a, b))" required>
+  Cumulative CO₂ capacity tracked from the previous step. Pass the `max_breakdown_co2` returned by the previous call.
+</ParamField>
+
+<ParamField path="dy" type="float" required>
+  Vertical grid spacing (m).
+</ParamField>
+
+<ParamField path="dt" type="float" required>
+  Time step (same units as `RCO2_breakdown` rate).
+</ParamField>
+
+### Returns
+
+<ResponseField name="RCO2_breakdown" type="numpy.ndarray (shape=(a, b))">
+  Instantaneous CO₂ release rate from decarbonation (per time unit).
+</ResponseField>
+
+<ResponseField name="max_breakdown_co2" type="numpy.ndarray (shape=(a, b))">
+  Updated cumulative capacity state. Pass to the next call.
+</ResponseField>
+
+---
+
+## `analyticalRo_I`
+
+```python
+emit.analyticalRo_I(T_field)
+```
+
+Initialises the integral state variable `I` required by the analytical Easy%Ro solution (`analytical_Ro`). Uses the complementary error function approximation from Sweeney & Burnham (1990) with coefficients `a1=2.334733`, `a2=0.250621`, `b1=3.330657`, `b2=1.681534`.
+
+Call this once before the first time step if you intend to use `analytical_Ro` rather than `SILLi_emissions`.
+
+### Parameters
+
+<ParamField path="T_field" type="numpy.ndarray (shape=(a, b))" required>
+  Initial temperature field (°C).
+</ParamField>
+
+### Returns
+
+<ResponseField name="I" type="numpy.ndarray (shape=(20, a, b))">
+  Initial integral state array for the 20 Easy%Ro reaction channels.
+</ResponseField>

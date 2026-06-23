@@ -1,0 +1,219 @@
+---
+title: "Installing TuLIP and its dependencies"
+sidebarTitle: "Installation"
+description: "Install TuLIP's Python scientific stack — including optional high-performance solvers — via pip or conda, and verify your environment is ready."
+---
+
+TuLIP builds on Python's scientific computing ecosystem and pulls in a handful of specialised libraries: pypardiso for parallel sparse-direct solves backed by Intel MKL, numba for JIT-compiled inner loops, and pyvista / h5py for 3D visualisation and HDF5 I/O. Most dependencies install without friction on standard x86 Linux and Windows machines; Apple Silicon users and HPC cluster users should read the platform notes below before starting.
+
+---
+
+## Requirements
+
+- **Python** ≥ 3.9 (the reference conda environment uses 3.12)
+- **Core dependencies** (required for every simulation):
+
+| Package | Purpose |
+|---------|---------|
+| `numpy` | Array operations and grid arithmetic |
+| `scipy` | Sparse matrices, interpolation, special functions |
+| `pandas` | Tabular sill-parameter storage and CSV I/O |
+| `pypardiso` | Parallel sparse direct solver (Intel MKL-backed) |
+| `numba` | JIT compilation of inner heat-diffusion loops |
+| `matplotlib` | 2D result plotting |
+| `pyvista` | 3D VTK visualisation and mesh export |
+| `h5py` | HDF5 checkpoint and output files |
+| `networkx` | Optional sill-connectivity graph analysis |
+| `joblib` | Parallel outer loops for ensemble runs |
+
+---
+
+## Install with pip
+
+<CodeGroup>
+
+```bash Minimal install
+# Core solver dependencies only
+pip install numpy scipy pandas pypardiso numba
+```
+
+```bash Full install
+# Complete scientific stack for all TuLIP features
+pip install numpy scipy pandas pypardiso numba \
+            matplotlib pyvista h5py networkx joblib \
+            seaborn tqdm autograd
+```
+
+</CodeGroup>
+
+Clone the repository and add it to your path so Python can find `TuLIP.py` and the `utilities` module it imports:
+
+```bash
+git clone https://github.com/Aristle12/TuLIP.git
+cd TuLIP
+# run scripts from inside the repo root, or add it to PYTHONPATH:
+export PYTHONPATH="$PYTHONPATH:$(pwd)"
+```
+
+---
+
+## Install with conda
+
+The repository ships a fully pinned conda environment file at `environment/model_environment.yml`. This is the fastest way to get a reproducible environment that exactly matches the reference configuration used during development (Python 3.12, numpy 1.26, scipy 1.15, pypardiso 0.4.4, numba 0.59, pyvista 0.44, h5py 3.12, networkx 3.4, joblib 1.4).
+
+```bash
+# Clone the repo first
+git clone https://github.com/Aristle12/TuLIP.git
+cd TuLIP
+
+# Create and activate the environment
+conda env create -f environment/model_environment.yml
+conda activate model
+```
+
+<Note>
+  The environment name is `model` (set in the first line of `model_environment.yml`). If you already have an environment with that name, rename it during creation with `conda env create -f environment/model_environment.yml --name tulip`.
+</Note>
+
+---
+
+## Verify installation
+
+Run the following snippet from inside the `TuLIP/` repository directory to confirm that the library and its critical dependencies import correctly:
+
+```python
+# verify_tulip.py
+import numpy as np
+import scipy
+import pandas as pd
+import numba
+import TuLIP
+
+# Instantiate the controller with a small test domain
+sc = TuLIP.sill_controls(x=50000, y=5000, dx=500, dy=500)
+
+print("TuLIP imported successfully.")
+print(f"  numpy    : {np.__version__}")
+print(f"  scipy    : {scipy.__version__}")
+print(f"  pandas   : {pd.__version__}")
+print(f"  numba    : {numba.__version__}")
+print(f"  grid     : {int(50000/500)} x {int(5000/500)} nodes")
+print(f"  rock types loaded: {list(sc.rock_prop_dict.keys())}")
+```
+
+Expected output:
+
+```
+TuLIP imported successfully.
+  numpy    : 1.26.x
+  scipy    : 1.15.x
+  pandas   : 2.1.x
+  numba    : 0.59.x
+  grid     : 100 x 10 nodes
+  rock types loaded: ['shale', 'sandstone', 'limestone', 'granite', 'basalt', 'peridotite', 'basalt_melt']
+```
+
+---
+
+## Platform notes
+
+<Note>
+  **pypardiso and Intel MKL on Apple Silicon**
+
+  pypardiso wraps the Intel Pardiso sparse solver, which is distributed as part of Intel MKL. On Apple Silicon (M1/M2/M3) Macs, MKL is not natively available for the ARM architecture. If pypardiso fails to import or raises a linker error, TuLIP's `straight_solver` automatically falls back to `scipy.sparse.linalg.spsolve`. The fallback is correct but measurably slower for large grids (> 10⁶ nodes). To force the fallback explicitly, pass `k_const=True` and avoid direct calls to `pypardiso.spsolve` in custom scripts.
+
+  On Intel Macs and x86 Linux, pypardiso installs and runs without any extra steps.
+</Note>
+
+<Note>
+  **numba JIT warm-up on first run**
+
+  numba compiles decorated functions to native machine code the first time they are called in a Python session. For TuLIP's heat-diffusion kernels this one-time compilation typically takes 10–60 seconds depending on your hardware. You will see no output during this period — the simulation is not hung. Subsequent calls in the same session, and calls in future sessions once the compiled cache is written to `__pycache__`, are fast.
+</Note>
+
+---
+
+## Troubleshooting
+
+<AccordionGroup>
+
+  <Accordion title="ImportError: No module named 'pypardiso'">
+    pypardiso is not available for every platform or Python version via the default pip index. Try installing it explicitly:
+
+    ```bash
+    pip install pypardiso
+    ```
+
+    If the install fails on Apple Silicon, install the conda environment instead (it vendors a compatible build):
+
+    ```bash
+    conda env create -f environment/model_environment.yml
+    conda activate model
+    ```
+
+    Alternatively, TuLIP falls back to `scipy.sparse.linalg.spsolve` when pypardiso is absent — you can proceed without it at the cost of slower solves.
+  </Accordion>
+
+  <Accordion title="ImportError: No module named 'utilities'">
+    TuLIP imports a local `utilities` module that lives alongside `TuLIP.py` in the repository root. You must run Python **from inside the cloned `TuLIP/` directory**, or add it to your `PYTHONPATH`:
+
+    ```bash
+    # Option 1 — run from the repo root
+    cd /path/to/TuLIP
+    python your_script.py
+
+    # Option 2 — add to PYTHONPATH (bash)
+    export PYTHONPATH="/path/to/TuLIP:$PYTHONPATH"
+    ```
+  </Accordion>
+
+  <Accordion title="numba raises 'cannot determine Numba type' or compilation errors">
+    Numba is sensitive to numpy version compatibility. The supported pairing is numba 0.59 with numpy 1.26. If you installed a newer numpy independently (e.g., numpy 2.x), downgrade it:
+
+    ```bash
+    pip install "numpy>=1.24,<2.0" "numba==0.59.*"
+    ```
+
+    Using the pinned conda environment avoids this class of conflict entirely.
+  </Accordion>
+
+  <Accordion title="pyvista import fails or raises VTK rendering errors">
+    pyvista requires a working VTK installation. On headless servers (e.g., HPC login nodes) VTK may fail to initialise a display. Set the off-screen rendering flag before importing pyvista:
+
+    ```python
+    import pyvista as pv
+    pv.global_theme.backend = "static"   # or use pv.start_xvfb() on Linux
+    ```
+
+    Alternatively, install the off-screen-only VTK wheel:
+
+    ```bash
+    pip install vtk --extra-index-url https://wheels.vtk.org
+    ```
+  </Accordion>
+
+  <Accordion title="h5py raises HDF5 version mismatch warning">
+    h5py links against a system or conda-managed HDF5 C library. A mismatch between the compiled h5py and the available `libhdf5` can cause warnings or crashes. If you see `HDF5 library version mismatched error`, ensure h5py and libhdf5 come from the same source:
+
+    ```bash
+    # conda — installs h5py against its own libhdf5
+    conda install h5py
+
+    # pip — installs a self-contained wheel (no system libhdf5 needed)
+    pip install --no-binary h5py h5py
+    ```
+  </Accordion>
+
+  <Accordion title="conda env create fails with 'PackagesNotFoundError'">
+    The full `model_environment.yml` pins packages from the `anaconda`, `haasad`, and `conda-forge` channels. Make sure all three channels are accessible:
+
+    ```bash
+    conda config --add channels conda-forge
+    conda config --add channels anaconda
+    conda env create -f environment/model_environment.yml
+    ```
+
+    If individual packages remain unavailable (common on air-gapped systems), create a minimal environment manually using only the core dependencies listed in the [Requirements](#requirements) table.
+  </Accordion>
+
+</AccordionGroup>

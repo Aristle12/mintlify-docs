@@ -1,0 +1,431 @@
+---
+title: "cool class: heat-transfer solvers reference"
+sidebarTitle: "cool"
+description: "Full reference for the cool class: ADI, explicit, and implicit finite-difference solvers for 2D heat diffusion in heterogeneous geological media."
+---
+
+The `cool` class provides all numerical solvers for the 2-D heat diffusion equation in TuLIP. It supports four broad solver families — ADI (Alternating Direction Implicit), fully-implicit direct solve, matrix-free explicit convolution, and iterative — each suited to different accuracy-versus-speed trade-offs. You rarely need to call these methods directly; `sill_controls` wraps them through `cool.diff_solve`. All methods are instance methods unless marked `@staticmethod`.
+
+Axis conventions used throughout this class:
+- **Axis 0** (rows, count `a`) → depth direction, spacing `dy`.
+- **Axis 1** (cols, count `b`) → lateral direction, spacing `dx`.
+
+---
+
+## `diff_solve`
+
+```python
+cool.diff_solve(k, a, b, dx, dy, dt, Tnow, q, method, H, k_const=False)
+```
+
+Dispatcher that routes to the correct solver and, for matrix-based methods, constructs or reuses the coefficient matrix. This is the primary entry point called by `sill_controls` at every time step.
+
+### Parameters
+
+<ParamField path="k" type="numpy.ndarray (shape=(a, b))">
+  Thermal diffusivity field (m² yr⁻¹) at cell centres.
+</ParamField>
+
+<ParamField path="a" type="int">
+  Number of rows (depth nodes).
+</ParamField>
+
+<ParamField path="b" type="int">
+  Number of columns (lateral nodes).
+</ParamField>
+
+<ParamField path="dx" type="float">
+  Lateral grid spacing (m).
+</ParamField>
+
+<ParamField path="dy" type="float">
+  Vertical grid spacing (m).
+</ParamField>
+
+<ParamField path="dt" type="float">
+  Time step (years).
+</ParamField>
+
+<ParamField path="Tnow" type="numpy.ndarray (shape=(a, b))">
+  Current temperature field (°C). Dirichlet values on row 0 must already be set.
+</ParamField>
+
+<ParamField path="q" type="float | numpy.ndarray">
+  Bottom-boundary heat flux (W m⁻²). Pass `numpy.nan` to switch to a Dirichlet (fixed-temperature) lower boundary.
+</ParamField>
+
+<ParamField path="method" type="str">
+  Solver selector. See method table below.
+</ParamField>
+
+<ParamField path="H" type="tuple (H_rad, H_lat)">
+  Source terms:
+  - `H_rad` — radiogenic heat production array (°C yr⁻¹), shape `(a, b)`.
+  - `H_lat` — latent-heat scaling factor (dimensionless), shape `(a, b)`.
+</ParamField>
+
+<ParamField path="k_const" type="bool" default="False">
+  When `True` and `method` is `'smooth'` or `'chain'`, pre-builds the coefficient matrix once and reuses it every call instead of rebuilding from `k`. Speeds up runs where diffusivity does not change between steps.
+</ParamField>
+
+### Method string options
+
+| `method` | Solver | Notes |
+|---|---|---|
+| `'conv smooth'` | Explicit, averaged permeability | Fast; stability limited by CFL criterion |
+| `'conv chain'` | Explicit, chain-rule | Accounts for diffusivity gradients explicitly |
+| `'adi'` | ADI (Peaceman-Rachford) | **Recommended** — unconditionally stable, O(N) cost |
+| `'smooth'` | Implicit, averaged permeability | Full matrix build each step unless `k_const=True` |
+| `'chain'` | Implicit, chain-rule | Full matrix build each step unless `k_const=True` |
+
+### Returns
+
+<ResponseField name="Tnow" type="numpy.ndarray (shape=(a, b))">
+  Updated temperature field at time `t + dt`.
+</ResponseField>
+
+### Example
+
+```python
+from TuLIP import cool
+import numpy as np
+
+solver = cool()
+a, b = 100, 200
+k = np.ones((a, b)) * 31.536      # uniform diffusivity
+T = np.zeros((a, b))
+T[0, :] = 0                        # surface (Dirichlet)
+T[-1, :] = 500                     # basal temperature
+
+H_rad = np.zeros((a, b))
+H_lat = np.ones((a, b))
+H = (H_rad, H_lat)
+
+T_new = solver.diff_solve(k, a, b, dx=50, dy=50, dt=0.5,
+                           Tnow=T, q=np.nan,
+                           method='adi', H=H)
+```
+
+---
+
+## `conv_smooth_solve_adi`
+
+```python
+cool.conv_smooth_solve_adi(k, a, b, dx, dy, dt, Tf, H, q=np.nan)
+```
+
+Peaceman-Rachford Alternating Direction Implicit solver. Splits each time step `dt` into two half-steps of `dt/2` — one implicit along depth (axis 0), one implicit along the lateral direction (axis 1) — by solving a sequence of tridiagonal systems via `scipy.linalg.solve_banded`. This gives unconditional stability at O(N) cost per step and is the recommended solver for production runs.
+
+**Step 1** (implicit along axis 0, explicit along axis 1):  
+`(I − A_y/2) T* = (I + A_x/2) Tⁿ + source/2`
+
+**Step 2** (implicit along axis 1, explicit along axis 0):  
+`(I − A_x/2) T^{n+1} = (I + A_y/2) T* + source/2`
+
+### Parameters
+
+<ParamField path="k" type="numpy.ndarray (shape=(a, b))">
+  Diffusivity field.
+</ParamField>
+
+<ParamField path="a" type="int">
+  Row count.
+</ParamField>
+
+<ParamField path="b" type="int">
+  Column count.
+</ParamField>
+
+<ParamField path="dx" type="float">
+  Lateral spacing (m).
+</ParamField>
+
+<ParamField path="dy" type="float">
+  Vertical spacing (m).
+</ParamField>
+
+<ParamField path="dt" type="float">
+  Time step (years).
+</ParamField>
+
+<ParamField path="Tf" type="numpy.ndarray (shape=(a, b))">
+  Temperature field at current time.
+</ParamField>
+
+<ParamField path="H" type="tuple (H_rad, H_lat)">
+  Source terms (radiogenic heat, latent heat scaling).
+</ParamField>
+
+<ParamField path="q" type="float | numpy.nan" default="numpy.nan">
+  Bottom Neumann heat flux. `numpy.nan` → Dirichlet lower boundary.
+</ParamField>
+
+### Returns
+
+<ResponseField name="Tnow" type="numpy.ndarray (shape=(a, b))">
+  Temperature field at `t + dt`.
+</ResponseField>
+
+---
+
+## `conv_smooth_solve`
+
+```python
+cool.conv_smooth_solve(k, a, b, dx, dy, dt, Tf, H, q=np.nan)
+```
+
+Explicit stencil-based solver using averaged permeability at cell faces. Computes arithmetic means of `k` between neighbouring cells (`avg_perm`) and applies the update in a single vectorised array operation. Decorated with `@jit(forceobj=True)` for Numba acceleration.
+
+**Stability requirement** (CFL-like): `dt ≤ dx² / (4 · max(k))`.
+
+### Parameters
+
+Same as `conv_smooth_solve_adi` minus the ADI half-step logic; `Tf` replaces `Tf` semantically identically.
+
+### Returns
+
+<ResponseField name="Tnow" type="numpy.ndarray (shape=(a, b))">
+  Updated temperature field.
+</ResponseField>
+
+---
+
+## `perm_smoothed_solve`
+
+```python
+cool.perm_smoothed_solve(k, a, b, dx, dy, dt, Tnow, q, Af, H)
+```
+
+Fully explicit (forward-Euler) solver using the averaged-permeability coefficient matrix `Af`. If `Af` is `numpy.nan`, the matrix is rebuilt from `k` using `avg_perm`. Otherwise the pre-built matrix is reused (useful when diffusivity is constant). The matrix multiplication `Af · T` produces the updated field.
+
+### Parameters
+
+<ParamField path="k" type="numpy.ndarray (shape=(a, b))">
+  Diffusivity field (already divided by `H_lat` when called from `diff_solve`).
+</ParamField>
+
+<ParamField path="a, b" type="int">
+  Grid dimensions.
+</ParamField>
+
+<ParamField path="dx, dy" type="float">
+  Grid spacing (m).
+</ParamField>
+
+<ParamField path="dt" type="float">
+  Time step (years).
+</ParamField>
+
+<ParamField path="Tnow" type="numpy.ndarray (shape=(a, b))">
+  Current temperature.
+</ParamField>
+
+<ParamField path="q" type="float | numpy.nan">
+  Bottom heat flux.
+</ParamField>
+
+<ParamField path="Af" type="scipy.sparse.lil_matrix | numpy.nan">
+  Pre-computed coefficient matrix. Pass `numpy.nan` to trigger a rebuild.
+</ParamField>
+
+<ParamField path="H" type="tuple (H_rad, H_lat)">
+  Source terms.
+</ParamField>
+
+### Returns
+
+<ResponseField name="Tret" type="numpy.ndarray (shape=(a, b))">
+  Updated temperature field.
+</ResponseField>
+
+---
+
+## `get_conductivity`
+
+```python
+cool.get_conductivity(T_field, rock, density, dy)
+```
+
+Returns temperature-dependent thermal conductivity (W m⁻¹ K⁻¹) using the Zoth & Haenel empirical formula:
+
+```
+conductivity = 1 / (0.24094 + 4.6019×10⁻⁴ × (T + 273.15))
+```
+
+`rock` and `density` are accepted for API compatibility but not used in the default formula.
+
+### Parameters
+
+<ParamField path="T_field" type="numpy.ndarray">
+  Temperature field (°C).
+</ParamField>
+
+<ParamField path="rock" type="numpy.ndarray">
+  Lithology array (unused in the default formula, reserved for custom `k_func`).
+</ParamField>
+
+<ParamField path="density" type="numpy.ndarray">
+  Density field (kg m⁻³, unused in default formula).
+</ParamField>
+
+<ParamField path="dy" type="float">
+  Vertical grid spacing (m, unused in default formula).
+</ParamField>
+
+### Returns
+
+<ResponseField name="conductivity" type="numpy.ndarray">
+  Thermal conductivity field (W m⁻¹ K⁻¹), same shape as `T_field`.
+</ResponseField>
+
+---
+
+## `get_specific_heat`
+
+```python
+cool.get_specific_heat(T_field, rock, density, dy)
+```
+
+Returns temperature- and lithology-dependent specific heat capacity (J kg⁻¹ K⁻¹) using polynomial fits from Waples & Waples (2004). Igneous rocks (`granite`, `basalt`, `peridotite`) use one polynomial set; sedimentary rocks (`sandstone`, `shale`, `limestone`, `marl`, `evaporite`) use another.
+
+```
+Cp = A + B√T + C/T + D/T² + E/T³
+```
+
+Pressure is computed from cumulative density × depth.
+
+### Parameters
+
+<ParamField path="T_field" type="numpy.ndarray">
+  Temperature field (°C).
+</ParamField>
+
+<ParamField path="rock" type="numpy.ndarray">
+  Lithology map (string objects).
+</ParamField>
+
+<ParamField path="density" type="numpy.ndarray">
+  Density field (kg m⁻³).
+</ParamField>
+
+<ParamField path="dy" type="float">
+  Vertical grid spacing (m), used to compute lithostatic pressure.
+</ParamField>
+
+### Returns
+
+<ResponseField name="Cp" type="numpy.ndarray">
+  Specific heat field (J kg⁻¹ K⁻¹), same shape as `T_field`.
+</ResponseField>
+
+---
+
+## `calcF`
+
+```python
+cool.calcF(T_field, T_solidus, T_liquidus)
+```
+
+Calculates melt fraction F ∈ [0, 1] using a tanh-based smooth step function. The smooth transition is essential for numerical stability when computing the derivative `dF/dT` inside `get_latH`.
+
+**Formula (simplified):** The function uses a `softplus`-shaped power-law for the mushy zone combined with `tanh` masks at the solidus and liquidus to produce a continuously differentiable melt fraction curve.
+
+### Parameters
+
+<ParamField path="T_field" type="numpy.ndarray">
+  Temperature field (°C).
+</ParamField>
+
+<ParamField path="T_solidus" type="float">
+  Temperature at which melting begins (°C).
+</ParamField>
+
+<ParamField path="T_liquidus" type="float">
+  Temperature at which the rock is fully molten (°C).
+</ParamField>
+
+### Returns
+
+<ResponseField name="F" type="numpy.ndarray">
+  Melt fraction field, same shape as `T_field`. Values are in [0, 1].
+</ResponseField>
+
+### Example
+
+```python
+import numpy as np
+from TuLIP import cool
+
+T = np.linspace(700, 1300, 200)
+F = cool.calcF(T, T_solidus=800, T_liquidus=1200)
+# F ≈ 0 below 800 °C, ≈ 1 above 1200 °C
+```
+
+---
+
+## `get_latH`
+
+```python
+cool.get_latH(
+    T_field, lithology,
+    melt='basalt', specific_heat=850, L=4e5,
+    T_liquidus=1100, T_solidus=800, density=2800,
+    curve_func=None, args=None
+)
+```
+
+Computes the effective specific-heat scaling factor `H_lat = 1 + (L/Cp) · dF/dT` that accounts for the latent heat of crystallisation. The heat equation is modified as:
+
+```
+(ρ · Cp · H_lat) · ∂T/∂t = ∇·(k ∇T) + H_rad
+```
+
+The gradient `dF/dT` is computed via `autograd.elementwise_grad` applied to `curve_func` (defaulting to `calcF`).
+
+### Parameters
+
+<ParamField path="T_field" type="numpy.ndarray">
+  Temperature field (°C).
+</ParamField>
+
+<ParamField path="lithology" type="numpy.ndarray">
+  Lithology map. `H_lat` is modified only where `lithology == melt`.
+</ParamField>
+
+<ParamField path="melt" type="str" default="'basalt'">
+  Lithology label identifying molten nodes.
+</ParamField>
+
+<ParamField path="specific_heat" type="float" default="850">
+  Cp of the melt (J kg⁻¹ K⁻¹).
+</ParamField>
+
+<ParamField path="L" type="float" default="4e5">
+  Latent heat of fusion (J kg⁻¹).
+</ParamField>
+
+<ParamField path="T_liquidus" type="float" default="1100">
+  Liquidus temperature (°C).
+</ParamField>
+
+<ParamField path="T_solidus" type="float" default="800">
+  Solidus temperature (°C).
+</ParamField>
+
+<ParamField path="density" type="float" default="2800">
+  Melt density (kg m⁻³, unused in current formula but accepted for interface compatibility).
+</ParamField>
+
+<ParamField path="curve_func" type="callable | None" default="None">
+  Melt-fraction function `F(T_field, *args)`. Defaults to `cool.calcF`.
+</ParamField>
+
+<ParamField path="args" type="tuple | None" default="None">
+  Extra arguments passed to `curve_func`. Defaults to `(T_solidus, T_liquidus)`.
+</ParamField>
+
+### Returns
+
+<ResponseField name="H_lat" type="numpy.ndarray">
+  Latent-heat scaling factor, same shape as `T_field`. Equal to 1 everywhere except in molten nodes where `H_lat = 1 + (L/Cp) · dF/dT`.
+</ResponseField>

@@ -1,72 +1,76 @@
 {
   "$schema": "https://mintlify.com/docs.json",
-  "theme": "mint",
-  "name": "Mintlify Starter Kit",
+  "name": "TuLIP",
+  "theme": "palm",
   "colors": {
-    "primary": "#16A34A",
-    "light": "#07C983",
-    "dark": "#15803D"
-  },
-  "favicon": "/favicon.svg",
-  "navigation": {
-    "pages": [
-      {
-        "group": "Getting Started",
-        "pages": [
-          "index",
-          "quickstart"
-        ]
-      }
-    ],
-    "global": {
-      "anchors": [
-        {
-          "anchor": "Documentation",
-          "href": "https://mintlify.com/docs",
-          "icon": "book-open-cover"
-        },
-        {
-          "anchor": "Blog",
-          "href": "https://mintlify.com/blog",
-          "icon": "newspaper"
-        }
-      ]
-    }
+    "primary": "#1474ec",
+    "light": "#7cb4e8",
+    "dark": "#25835d"
   },
   "logo": {
-    "light": "/logo/light.svg",
-    "dark": "/logo/dark.svg"
+    "light": "https://media.brand.dev/83a9161f-b8aa-4da2-b445-d6234fb6092f.svg",
+    "dark": "https://media.brand.dev/83a9161f-b8aa-4da2-b445-d6234fb6092f.svg"
   },
+  "favicon": "https://media.brand.dev/760ae6e1-c553-4db0-b05a-db7bf19fa339.jpg",
   "navbar": {
-    "links": [
-      {
-        "label": "Support",
-        "href": "mailto:hi@mintlify.com"
-      }
-    ],
     "primary": {
-      "type": "button",
-      "label": "Dashboard",
-      "href": "https://app.mintlify.com"
+      "type": "github",
+      "href": "https://github.com/Aristle12/TuLIP"
     }
   },
-  "contextual": {
-    "options": [
-      "copy",
-      "view",
-      "chatgpt",
-      "claude",
-      "perplexity",
-      "mcp",
-      "cursor",
-      "vscode"
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "installation"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "concepts/overview",
+              "concepts/sill-emplacement",
+              "concepts/heat-transfer",
+              "concepts/carbon-emissions"
+            ]
+          },
+          {
+            "group": "Guides",
+            "pages": [
+              "guides/building-sill-cube",
+              "guides/running-simulation",
+              "guides/parallel-runs",
+              "guides/analyzing-results",
+              "guides/vtk-visualization"
+            ]
+          },
+          {
+            "group": "Configuration",
+            "pages": [
+              "configuration/domain-setup",
+              "configuration/rock-properties",
+              "configuration/solvers",
+              "configuration/emissions-models"
+            ]
+          },
+          {
+            "group": "Reference",
+            "pages": [
+              "reference/sill-controls",
+              "reference/cool",
+              "reference/emit",
+              "reference/rules",
+              "reference/utilities"
+            ]
+          }
+        ]
+      }
     ]
-  },
-  "footer": {
-    "socials": {
-      "x": "https://x.com/mintlify",
-      "github": "https://github.com/mintlify",
-      "linkedin": "https://linkedin.com/company/mintlify"
-    }
   }
 }

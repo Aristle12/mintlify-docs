@@ -1,0 +1,90 @@
+---
+title: "2D finite-difference heat transfer solvers in TuLIP"
+sidebarTitle: "Heat Transfer"
+description: "Explore TuLIP's finite-difference heat diffusion solvers, thermal property models, and heat-source terms for magmatic simulations."
+---
+
+TuLIP advances the crustal temperature field by numerically solving the 2D heat diffusion equation on a regular Cartesian grid. At each time step, `cool.diff_solve()` takes the current temperature field, the spatially varying thermal diffusivity, and any heat sources, and returns the updated field one time step later. You select the solver algorithm by passing a method string; all solvers share the same interface so you can switch between them without changing any other part of your workflow.
+
+## The heat equation
+
+TuLIP solves the parabolic partial differential equation
+
+$$
+\frac{\partial T}{\partial t} = \nabla \cdot \left( \alpha \, \nabla T \right) + H
+$$
+
+where *T* is temperature (°C), *t* is time (s), and *H* represents volumetric heat sources. The thermal diffusivity **α** = *k* / (ρ *C*ₚ) combines thermal conductivity *k* (W m⁻¹ K⁻¹), bulk density ρ (kg m⁻³), and specific heat *C*ₚ (J kg⁻¹ K⁻¹). Because these properties vary with rock type — and optionally with temperature — **α** is a spatially heterogeneous field that TuLIP recomputes at every time step when `k_const=False`.
+
+The upper boundary is a fixed temperature (Dirichlet condition); the lower boundary accepts either a fixed temperature or a prescribed heat flux *q* (Neumann condition, set via the `q` argument of `diff_solve`).
+
+## Available solvers
+
+You select a solver by passing its name string to `diff_solve()` (or to `emplace_sills()` via the `cool_method` argument).
+
+| Method string | Algorithm | Notes |
+|---|---|---|
+| `'conv smooth'` | Explicit convolution, averaged (smoothed) diffusivity at cell faces | Fast; recommended for exploratory runs. Stability requires dt ≤ dx²/(4α_max). |
+| `'conv chain'` | Explicit convolution, chain-rule gradient of diffusivity | Captures sharp conductivity contrasts more accurately at the cost of slightly higher compute time. |
+| `'adi'` | Alternating Direction Implicit (ADI), smoothed diffusivity | Unconditionally stable; splits each time step into two 1D tridiagonal solves. Best choice for long production runs with large time steps. |
+| `'smooth'` | Fully implicit, smoothed diffusivity | Solves the full sparse linear system via `pypardiso` or `scipy`. Very stable but memory-intensive on large grids. |
+| `'chain'` | Fully implicit, chain-rule diffusivity gradient | Fully implicit with the most accurate representation of conductivity gradients; highest memory cost. |
+
+<Tip>
+Use `'adi'` for production runs. Its unconditional stability lets you take time steps that are orders of magnitude larger than the explicit CFL limit, dramatically cutting run times for million-year simulations — without sacrificing accuracy on typical crustal grids.
+</Tip>
+
+## Thermal properties
+
+### Thermal conductivity
+
+When `k_const=True` (the default), TuLIP uses a single constant conductivity value `kc_val` (default `7.884e7` in internal diffusivity units) across the entire grid. This is appropriate for first-pass runs or benchmarks.
+
+Set `k_const=False` to engage the built-in temperature-dependent lookup, `cool.get_conductivity()`, which computes conductivity as:
+
+```
+k = 1 / (0.24094 + 4.6019×10⁻⁴ × (T + 273.15))
+```
+
+You can also supply a completely custom function via the `k_func` argument of `sill_controls`. The function signature must match `f(T_field, rock, density, dy)` and return a 2D conductivity array of the same shape as the grid.
+
+### Specific heat
+
+When `cp_const=True`, TuLIP reads specific heat from the `rock_prop_dict` look-up table for each lithology. Setting `cp_const=False` activates `cool.get_specific_heat()`, which fits a five-term polynomial in temperature separately for igneous rocks (granite, basalt, peridotite) and sedimentary rocks (sandstone, shale, limestone, marl, evaporite). A custom function can be provided via `cp_func`.
+
+### Built-in rock look-up table
+
+The default `rock_prop_dict` covers the following lithologies out of the box:
+
+| Rock type | Density (kg/m³) | Porosity | Default TOC (wt%) | Cₚ (J/kg/K) |
+|---|---|---|---|---|
+| shale | 2500 | 0.10 | 2.0 | 820 |
+| sandstone | 2600 | 0.20 | 2.5 | 800 |
+| limestone | 2600 | 0.20 | 2.5 | 800 |
+| granite | 2700 | 0.05 | 0.0 | 800 |
+| basalt | 2850 | 0.00 | 0.0 | 850 |
+| peridotite | 3100 | 0.05 | 0.0 | 1200 |
+
+You can override any entry or add new rock types by passing a custom `rock_prop_dict` to `sill_controls`.
+
+## Heat sources
+
+TuLIP tracks two additional volumetric heat sources through the `H` array passed to `diff_solve`:
+
+### Latent heat of crystallization
+
+As magma cools from liquidus to solidus, it releases latent heat that slows solidification. `cool.get_latH()` computes this contribution based on the local melt fraction, the magma latent heat `L` (default 4×10⁵ J/kg), and the liquidus–solidus temperature window. You can supply a custom melt-fraction curve via `melt_fraction_function`.
+
+### Radiogenic heat
+
+`cool.get_radH()` adds a background volumetric heat production term proportional to rock density, representing the decay of long-lived radioactive isotopes in the crust.
+
+### Organic latent heat
+
+When organic matter breaks down, it absorbs heat (endothermic cracking reactions). `cool.get_org_latH()` converts the organic matter loss rate from the carbon model into a negative heat source, slightly cooling the rocks closest to maturing sediments.
+
+Set `include_external_heat=True` (the default) on `sill_controls` to activate all three contributions. Set it to `False` to run a purely diffusive simulation without phase-change or radiogenic terms — useful for isolating the contribution of each process.
+
+<Note>
+TuLIP will print a runtime warning and automatically reduce the time step if the explicit solvers (`'conv smooth'` or `'conv chain'`) detect that your chosen `dt` exceeds the CFL stability limit for the current diffusivity field. Watch the console output during `get_silli_initial_thermogenic_state()` and adjust `dt` if the warning fires repeatedly.
+</Note>

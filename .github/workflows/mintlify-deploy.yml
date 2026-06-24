@@ -31,14 +31,18 @@ jobs:
           mkdir out
           cp -r out_temp/* out/ || true
           
-          # 1. CRITICAL: Create the .nojekyll file so GitHub stops blocking the _next folder
+          # Create the .nojekyll file
           touch out/.nojekyll
           
-          # 2. Update resource links in all HTML files to account for the /TuLIP-docs subfolder
+          # Fix global framework paths
           find out -name "*.html" -exec sed -i 's|href="/_next/|href="/TuLIP-docs/_next/|g' {} +
           find out -name "*.html" -exec sed -i 's|src="/_next/|src="/TuLIP-docs/_next/|g' {} +
+          
+          # Fix all variations of image asset pathing (src, srcset, and raw image paths)
           find out -name "*.html" -exec sed -i 's|href="/assets/|href="/TuLIP-docs/assets/|g' {} +
           find out -name "*.html" -exec sed -i 's|src="/assets/|src="/TuLIP-docs/assets/|g' {} +
+          find out -name "*.html" -exec sed -i 's|srcset="/assets/|srcset="/TuLIP-docs/assets/|g' {} +
+          find out -name "*.html" -exec sed -i 's|"/assets/|"/TuLIP-docs/assets/|g' {} +
 
       - name: Deploy to GitHub Pages Branch
         uses: JamesIves/github-pages-deploy-action@v4

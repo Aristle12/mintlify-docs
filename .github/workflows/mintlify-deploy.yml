@@ -3,7 +3,7 @@ name: Deploy Mintlify to GitHub Pages
 on:
   push:
     branches:
-      - main # Or 'master' if your main branch is called master
+      - main
 
 permissions:
   contents: write
@@ -25,24 +25,25 @@ jobs:
           PUPPETEER_SKIP_DOWNLOAD=true npm install -g mint
           mint export
 
-      - name: Unzip and Fix Subfolder Pathing
+      - name: Unzip and Global Path Rewrite
         run: |
           unzip export.zip -d out_temp
           mkdir out
           cp -r out_temp/* out/ || true
           
-          # Create the .nojekyll file
+          # Create the .nojekyll file so GitHub serves underscore folders
           touch out/.nojekyll
           
-          # Fix global framework paths
-          find out -name "*.html" -exec sed -i 's|href="/_next/|href="/TuLIP-docs/_next/|g' {} +
-          find out -name "*.html" -exec sed -i 's|src="/_next/|src="/TuLIP-docs/_next/|g' {} +
+          # GLOBAL REWRITE: Sweep through every single HTML and JS file
+          # This catches images, logos, layouts, and background routing scripts
+          find out -type f \( -name "*.html" -o -name "*.js" \) -exec sed -i 's|"/_next/|"/TuLIP-docs/_next/|g' {} +
+          find out -type f \( -name "*.html" -o -name "*.js" \) -exec sed -i 's|"/assets/|"/TuLIP-docs/assets/|g' {} +
+          find out -type f \( -name "*.html" -o -name "*.js" \) -exec sed -i 's|"/images/|"/TuLIP-docs/images/|g' {} +
           
-          # Fix all variations of image asset pathing (src, srcset, and raw image paths)
-          find out -name "*.html" -exec sed -i 's|href="/assets/|href="/TuLIP-docs/assets/|g' {} +
-          find out -name "*.html" -exec sed -i 's|src="/assets/|src="/TuLIP-docs/assets/|g' {} +
-          find out -name "*.html" -exec sed -i 's|srcset="/assets/|srcset="/TuLIP-docs/assets/|g' {} +
-          find out -name "*.html" -exec sed -i 's|"/assets/|"/TuLIP-docs/assets/|g' {} +
+          # Catch URL-encoded variants that Next.js uses for optimized image parameters (%2F is /)
+          find out -type f \( -name "*.html" -o -name "*.js" \) -exec sed -i 's|%2F_next%2F|%2FTuLIP-docs%2F_next%2F|g' {} +
+          find out -type f \( -name "*.html" -o -name "*.js" \) -exec sed -i 's|%2Fassets%2F|%2FTuLIP-docs%2Fassets%2F|g' {} +
+          find out -type f \( -name "*.html" -o -name "*.js" \) -exec sed -i 's|%2Fimages%2F|%2FTuLIP-docs%2Fimages%2F|g' {} +
 
       - name: Deploy to GitHub Pages Branch
         uses: JamesIves/github-pages-deploy-action@v4

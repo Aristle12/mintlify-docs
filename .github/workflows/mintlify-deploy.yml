@@ -34,19 +34,20 @@ jobs:
           # Create the .nojekyll file so GitHub serves underscore folders
           touch out/.nojekyll
           
-          # GLOBAL REWRITE: Sweep through every single HTML and JS file
-          # This catches images, logos, layouts, and background routing scripts
+          # 1. Fix global asset frameworks
           find out -type f \( -name "*.html" -o -name "*.js" \) -exec sed -i 's|"/_next/|"/TuLIP-docs/_next/|g' {} +
           find out -type f \( -name "*.html" -o -name "*.js" \) -exec sed -i 's|"/assets/|"/TuLIP-docs/assets/|g' {} +
           find out -type f \( -name "*.html" -o -name "*.js" \) -exec sed -i 's|"/images/|"/TuLIP-docs/images/|g' {} +
           
-          # Catch URL-encoded variants that Next.js uses for optimized image parameters (%2F is /)
+          # 2. Fix internal Next.js client-side page routing links
+          find out -type f \( -name "*.html" -o -name "*.js" \) -exec sed -i 's|href="/|href="/TuLIP-docs/|g' {} +
+          find out -type f \( -name "*.html" -o -name "*.js" \) -exec sed -i 's|src="/|src="/TuLIP-docs/|g' {} +
+          
+          # 3. Catch URL-encoded variants that Next.js uses for dynamic image modules
           find out -type f \( -name "*.html" -o -name "*.js" \) -exec sed -i 's|%2F_next%2F|%2FTuLIP-docs%2F_next%2F|g' {} +
           find out -type f \( -name "*.html" -o -name "*.js" \) -exec sed -i 's|%2Fassets%2F|%2FTuLIP-docs%2Fassets%2F|g' {} +
           find out -type f \( -name "*.html" -o -name "*.js" \) -exec sed -i 's|%2Fimages%2F|%2FTuLIP-docs%2Fimages%2F|g' {} +
-          # Fix internal routing for sub-pages and sidebar clicks
-          find out -type f \( -name "*.html" -o -name "*.js" \) -exec sed -i 's|href="/|href="/YOUR-NEW-REPO/|g' {} +
-          
+
       - name: Deploy to GitHub Pages Branch
         uses: JamesIves/github-pages-deploy-action@v4
         with:

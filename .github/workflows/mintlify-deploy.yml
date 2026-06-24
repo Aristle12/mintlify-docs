@@ -21,32 +21,21 @@ jobs:
           node-version: 20
 
       - name: Install Mintlify CLI and Export
+        # We pass the asset prefix directly to the compiler so it handles paths perfectly
+        env:
+          ASSET_PREFIX: /TuLIP-docs
         run: |
           PUPPETEER_SKIP_DOWNLOAD=true npm install -g mint
           mint export
 
-      - name: Unzip and Global Path Rewrite
+      - name: Unzip and Prepare Output
         run: |
           unzip export.zip -d out_temp
           mkdir out
           cp -r out_temp/* out/ || true
           
-          # Create the .nojekyll file so GitHub serves underscore folders
+          # Create the critical .nojekyll file so GitHub serves the underscore folders
           touch out/.nojekyll
-          
-          # 1. Fix global asset frameworks
-          find out -type f \( -name "*.html" -o -name "*.js" \) -exec sed -i 's|"/_next/|"/TuLIP-docs/_next/|g' {} +
-          find out -type f \( -name "*.html" -o -name "*.js" \) -exec sed -i 's|"/assets/|"/TuLIP-docs/assets/|g' {} +
-          find out -type f \( -name "*.html" -o -name "*.js" \) -exec sed -i 's|"/images/|"/TuLIP-docs/images/|g' {} +
-          
-          # 2. Fix internal Next.js client-side page routing links
-          find out -type f \( -name "*.html" -o -name "*.js" \) -exec sed -i 's|href="/|href="/TuLIP-docs/|g' {} +
-          find out -type f \( -name "*.html" -o -name "*.js" \) -exec sed -i 's|src="/|src="/TuLIP-docs/|g' {} +
-          
-          # 3. Catch URL-encoded variants that Next.js uses for dynamic image modules
-          find out -type f \( -name "*.html" -o -name "*.js" \) -exec sed -i 's|%2F_next%2F|%2FTuLIP-docs%2F_next%2F|g' {} +
-          find out -type f \( -name "*.html" -o -name "*.js" \) -exec sed -i 's|%2Fassets%2F|%2FTuLIP-docs%2Fassets%2F|g' {} +
-          find out -type f \( -name "*.html" -o -name "*.js" \) -exec sed -i 's|%2Fimages%2F|%2FTuLIP-docs%2Fimages%2F|g' {} +
 
       - name: Deploy to GitHub Pages Branch
         uses: JamesIves/github-pages-deploy-action@v4

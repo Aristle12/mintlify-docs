@@ -3,7 +3,7 @@ name: Deploy Mintlify to GitHub Pages
 on:
   push:
     branches:
-      - main # Change this to 'master' if your main branch is called master
+      - main # Or 'master' if your main branch is called master
 
 permissions:
   contents: write
@@ -25,15 +25,18 @@ jobs:
           PUPPETEER_SKIP_DOWNLOAD=true npm install -g mint
           mint export
 
-      - name: Unzip and Prepare Static Files
+      - name: Unzip and Fix Subfolder Pathing
         run: |
           unzip export.zip -d out_temp
-          # Mintlify nests the export. Move everything to a clean 'out' directory
           mkdir out
           cp -r out_temp/* out/ || true
+          
+          # This magic line injects your repo path into the HTML files so the CSS loads beautifully!
+          find out -name "*.html" -exec sed -i 's|href="/_next/|href="/TuLIP-docs/_next/|g' {} +
+          find out -name "*.html" -exec sed -i 's|src="/_next/|src="/TuLIP-docs/_next/|g' {} +
 
       - name: Deploy to GitHub Pages Branch
         uses: JamesIves/github-pages-deploy-action@v4
         with:
           folder: out
-          branch: gh-pages # This automatically pushes your built HTML to a clean branch
+          branch: gh-pages
